@@ -421,6 +421,9 @@ export default function InboxPage() {
   const [newMessageSearchQuery, setNewMessageSearchQuery] = useState('');
   const [newMessageSearchResults, setNewMessageSearchResults] = useState<any[]>([]);
   const [isNewMessageSearching, setIsNewMessageSearching] = useState(false);
+  const [isUserProfileModalOpen, setIsUserProfileModalOpen] = useState(false);
+  const [userProfileData, setUserProfileData] = useState<any>(null);
+  const [isFetchingUserProfile, setIsFetchingUserProfile] = useState(false);
 
   useEffect(() => {
     if (isForwardModalOpen || isNewMessageModalOpen) {
@@ -3992,6 +3995,36 @@ export default function InboxPage() {
     }
   };
 
+  const fetchUserProfile = async (userId: string) => {
+    setIsFetchingUserProfile(true);
+    setUserProfileData(null);
+    setIsUserProfileModalOpen(true);
+    try {
+      const res = await fetch('/api/instagram/profile', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userId,
+          cookies: cookiesRef.current,
+          headers: headersRef.current,
+          data: postDataRef.current
+        })
+      });
+      const result = await res.json();
+      if (res.ok && result.success) {
+        setUserProfileData(result.user);
+      } else {
+        console.error('Failed to fetch user profile:', result.error || 'Unknown error');
+      }
+    } catch (err) {
+      console.error('Error fetching user profile:', err);
+    } finally {
+      setIsFetchingUserProfile(false);
+    }
+  };
+
   const handleForwardMessage = async () => {
     const selectedIds = Object.keys(forwardSelectedRecipients);
     if (selectedIds.length === 0 || !forwardMessageText.trim()) return;
@@ -5034,18 +5067,23 @@ export default function InboxPage() {
                 onClick={() => {
                   if (activeThread.is_group) {
                     setIsGroupDetailsModalOpen(true);
+                  } else {
+                    const partner = activeThread.users?.[0];
+                    if (partner?.pk || partner?.id) {
+                      fetchUserProfile(partner.pk || partner.id);
+                    }
                   }
                 }}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
-                  cursor: activeThread.is_group ? 'pointer' : 'default',
+                  cursor: 'pointer',
                   padding: '4px 8px',
                   borderRadius: '8px',
                   transition: 'background 0.2s ease',
                 }}
                 onMouseEnter={(e) => {
-                  if (activeThread.is_group) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)';
+                  e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)';
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.background = 'transparent';
@@ -9336,6 +9374,222 @@ export default function InboxPage() {
                 </div>
               </div>
             )}
+
+          </div>
+        </div>
+      )}
+
+      {/* User Profile Details Modal */}
+      {isUserProfileModalOpen && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0, 0, 0, 0.75)',
+          backdropFilter: 'blur(8px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 10000,
+        }} onClick={() => setIsUserProfileModalOpen(false)}>
+          
+          <div style={{
+            background: '#1c1c1e',
+            border: '1px solid rgba(255, 255, 255, 0.1)',
+            borderRadius: '16px',
+            width: '400px',
+            display: 'flex',
+            flexDirection: 'column',
+            boxShadow: '0 20px 40px rgba(0, 0, 0, 0.5)',
+            overflow: 'hidden'
+          }} onClick={(e) => e.stopPropagation()}>
+            
+            {/* Modal Header */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '16px 20px',
+              borderBottom: '1px solid rgba(255, 255, 255, 0.08)'
+            }}>
+              <span style={{ fontSize: '15px', fontWeight: '700', color: '#fff' }}>Kişi Bilgileri</span>
+              <button 
+                onClick={() => setIsUserProfileModalOpen(false)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'rgba(255,255,255,0.5)',
+                  cursor: 'pointer',
+                  padding: '4px'
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div style={{ padding: '24px 20px', overflowY: 'auto' }} className="custom-scrollbar">
+              {isFetchingUserProfile ? (
+                <div style={{ padding: '40px 0', textAlign: 'center', color: 'rgba(255,255,255,0.4)' }}>
+                  <svg className="refresh-spinning" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ margin: '0 auto' }}>
+                    <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
+                  </svg>
+                  <div style={{ marginTop: '12px', fontSize: '13px' }}>Profil detayları yükleniyor...</div>
+                </div>
+              ) : userProfileData ? (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
+                  {/* Avatar */}
+                  <img 
+                    src={userProfileData.hd_profile_pic_url_info?.url || userProfileData.profile_pic_url}
+                    alt={userProfileData.username}
+                    style={{
+                      width: '90px',
+                      height: '90px',
+                      borderRadius: '50%',
+                      border: '2px solid rgba(255,255,255,0.1)',
+                      marginBottom: '16px',
+                      objectFit: 'cover'
+                    }}
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&h=150&fit=crop&q=80";
+                    }}
+                  />
+
+                  {/* Name & Username */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                    <span style={{ fontSize: '18px', fontWeight: '700', color: '#fff' }}>
+                      {userProfileData.full_name || userProfileData.username}
+                    </span>
+                    {userProfileData.is_verified && (
+                      <span style={{ color: '#0095f6', display: 'flex', alignItems: 'center' }} title="Onaylı Hesap">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"></path>
+                        </svg>
+                      </span>
+                    )}
+                  </div>
+                  <span style={{ fontSize: '13px', color: 'rgba(255,255,255,0.5)', marginBottom: '16px' }}>
+                    @{userProfileData.username}
+                  </span>
+
+                  {/* Stats Grid */}
+                  <div style={{
+                    display: 'flex',
+                    justifyContent: 'space-around',
+                    width: '100%',
+                    background: 'rgba(255, 255, 255, 0.03)',
+                    borderRadius: '12px',
+                    padding: '12px 8px',
+                    marginBottom: '20px',
+                    border: '1px solid rgba(255, 255, 255, 0.05)'
+                  }}>
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      <span style={{ fontSize: '15px', fontWeight: '800', color: '#fff' }}>
+                        {userProfileData.media_count?.toLocaleString('tr-TR') || 0}
+                      </span>
+                      <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)', marginTop: '2px' }}>Gönderi</span>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      <span style={{ fontSize: '15px', fontWeight: '800', color: '#fff' }}>
+                        {userProfileData.follower_count?.toLocaleString('tr-TR') || 0}
+                      </span>
+                      <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)', marginTop: '2px' }}>Takipçi</span>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      <span style={{ fontSize: '15px', fontWeight: '800', color: '#fff' }}>
+                        {userProfileData.following_count?.toLocaleString('tr-TR') || 0}
+                      </span>
+                      <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)', marginTop: '2px' }}>Takip</span>
+                    </div>
+                  </div>
+
+                  {/* Bio & Category */}
+                  {userProfileData.category && (
+                    <span style={{
+                      fontSize: '11px',
+                      color: 'rgba(255, 255, 255, 0.4)',
+                      background: 'rgba(255, 255, 255, 0.06)',
+                      padding: '3px 8px',
+                      borderRadius: '4px',
+                      marginBottom: '10px',
+                      fontWeight: '600'
+                    }}>
+                      {userProfileData.category}
+                    </span>
+                  )}
+
+                  {userProfileData.biography && (
+                    <p style={{
+                      fontSize: '13px',
+                      color: 'rgba(255,255,255,0.85)',
+                      lineHeight: '1.5',
+                      whiteSpace: 'pre-wrap',
+                      marginBottom: '24px',
+                      textAlign: 'center'
+                    }}>
+                      {userProfileData.biography}
+                    </p>
+                  )}
+
+                  {/* Buttons */}
+                  <div style={{ display: 'flex', gap: '10px', width: '100%' }}>
+                    <a
+                      href={`https://instagram.com/${userProfileData.username}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        flex: 1,
+                        background: 'rgba(255, 255, 255, 0.1)',
+                        border: '1px solid rgba(255, 255, 255, 0.15)',
+                        borderRadius: '8px',
+                        color: '#fff',
+                        padding: '10px 0',
+                        fontSize: '13px',
+                        fontWeight: '700',
+                        textDecoration: 'none',
+                        transition: 'background 0.2s',
+                        display: 'inline-block',
+                        lineHeight: '36px',
+                        height: '38px'
+                      }}
+                      onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)'}
+                      onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)'}
+                    >
+                      Profili Aç
+                    </a>
+                    <button
+                      onClick={() => setIsUserProfileModalOpen(false)}
+                      style={{
+                        flex: 1,
+                        background: '#0095f6',
+                        border: 'none',
+                        borderRadius: '8px',
+                        color: '#fff',
+                        padding: '10px 0',
+                        fontSize: '13px',
+                        fontWeight: '700',
+                        cursor: 'pointer',
+                        transition: 'opacity 0.2s',
+                        height: '38px'
+                      }}
+                      onMouseEnter={(e) => e.currentTarget.style.opacity = '0.9'}
+                      onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
+                    >
+                      Kapat
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ padding: '40px 0', textAlign: 'center', color: 'rgba(255,255,255,0.4)', fontSize: '13px' }}>
+                  Profil bilgileri yüklenemedi.
+                </div>
+              )}
+            </div>
 
           </div>
         </div>
