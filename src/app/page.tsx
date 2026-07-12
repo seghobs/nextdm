@@ -309,6 +309,7 @@ export default function InboxPage() {
     messageId: string;
     text: string;
     isOwnMessage: boolean;
+    message: InstagramMessage | null;
   }
   const [msgContextMenu, setMsgContextMenu] = useState<MsgContextMenuState>({
     visible: false,
@@ -317,6 +318,7 @@ export default function InboxPage() {
     messageId: '',
     text: '',
     isOwnMessage: false,
+    message: null,
   });
   const msgContextMenuJustOpenedRef = useRef(false);
 
@@ -1467,6 +1469,13 @@ export default function InboxPage() {
 
         const fallbackText = text || item.igd_snippet || (item.item_type ? `[${item.item_type}]` : 'Ek içerik');
 
+        const repliedMessage = item.reply_to_message ? {
+          id: item.reply_to_message.item_id || item.reply_to_message.message_id || '',
+          text_body: item.reply_to_message.text || 'Mesaj',
+          sender_fbid: item.reply_to_message.user_id,
+          content_type: item.reply_to_message.item_type === 'text' ? 'TEXT' : 'ATTACHMENT'
+        } : null;
+
         return {
           id: item.message_id || item.item_id,
           item_id: item.item_id || undefined,
@@ -1487,7 +1496,8 @@ export default function InboxPage() {
           media_id: mediaId,
           like_count: likeCount,
           comment_count: commentCount,
-          reactions: mappedReactions
+          reactions: mappedReactions,
+          reply_to_message: repliedMessage
         };
       });
 
@@ -1646,6 +1656,13 @@ export default function InboxPage() {
       }
     }
 
+    const repliedMessage = (node.replied_to_message || node.reply_to_message) ? {
+      id: (node.replied_to_message || node.reply_to_message).id || (node.replied_to_message || node.reply_to_message).message_id || '',
+      text_body: (node.replied_to_message || node.reply_to_message).text_body || (node.replied_to_message || node.reply_to_message).text || 'Mesaj',
+      sender_fbid: (node.replied_to_message || node.reply_to_message).sender_fbid,
+      content_type: (node.replied_to_message || node.reply_to_message).content_type || 'TEXT'
+    } : null;
+
     return {
       id: node.id || node.message_id,
       sender_fbid: node.sender_fbid,
@@ -1665,7 +1682,8 @@ export default function InboxPage() {
       media_id: mediaId,
       like_count: likeCount,
       comment_count: commentCount,
-      reactions: node.reactions || null
+      reactions: node.reactions || null,
+      reply_to_message: repliedMessage
     };
   };
 
@@ -2275,8 +2293,13 @@ export default function InboxPage() {
     }
   };
 
-  // Simulated/Local message appending helper
-  const appendLocalMessage = (threadId: string, text: string, messageId: string, mediaPreviewUrl?: string) => {
+  const appendLocalMessage = (
+    threadId: string, 
+    text: string, 
+    messageId: string, 
+    mediaPreviewUrl?: string,
+    replyToMessage?: InstagramMessage | null
+  ) => {
     setThreads(prevThreads => {
       const updated = prevThreads.map(thread => {
         if (thread.id !== threadId) return thread;
@@ -2293,7 +2316,13 @@ export default function InboxPage() {
           igd_snippet: mediaPreviewUrl ? "Sen: Bir fotoğraf gönderdi." : `Sen: ${text}`,
           text_body: text,
           media_preview_url: mediaPreviewUrl || null,
-          media_type: mediaPreviewUrl ? 'media_share' : undefined
+          media_type: mediaPreviewUrl ? 'media_share' : undefined,
+          reply_to_message: replyToMessage ? {
+            id: replyToMessage.id,
+            text_body: replyToMessage.text_body || replyToMessage.content?.text_body || 'Mesaj',
+            sender_fbid: replyToMessage.sender_fbid,
+            content_type: replyToMessage.content_type || 'TEXT'
+          } : null
         };
 
         const updatedEdges = [...(thread.slide_messages?.edges || []), { node: newMsgNode }];
@@ -2320,6 +2349,7 @@ export default function InboxPage() {
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [selectedImageFile, setSelectedImageFile] = useState<File | null>(null);
   const [selectedImagePreviewUrl, setSelectedImagePreviewUrl] = useState<string | null>(null);
+  const [replyToMessage, setReplyToMessage] = useState<InstagramMessage | null>(null);
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -2350,6 +2380,10 @@ export default function InboxPage() {
     
     // Clear input field immediately
     setTypedMessage('');
+
+    // Capture and clear reply state immediately so preview goes away
+    const currentReplyToMessage = replyToMessage;
+    setReplyToMessage(null);
 
     // Clear typing timeout and send typing = false immediately
     if (typingTimeoutRef.current) {
@@ -2448,6 +2482,12 @@ export default function InboxPage() {
     if (hasText) {
       try {
         lastActivityRef.current = Date.now();
+        const replyParams = currentReplyToMessage ? {
+          replyToMessageId: currentReplyToMessage.id,
+          repliedToItemId: currentReplyToMessage.id,
+          repliedToClientContext: currentReplyToMessage.id
+        } : {};
+
         const response = await fetch('/api/instagram/send', {
           method: 'POST',
           headers: {
@@ -2459,6 +2499,7 @@ export default function InboxPage() {
             cookies: cookiesRef.current || cookies,
             headers: headersRef.current || headers,
             data: postDataRef.current || postData,
+            ...replyParams
           }),
         });
 
@@ -2493,7 +2534,7 @@ export default function InboxPage() {
         }
 
         const messageId = result.data?.ig_message_send?.message_id || `sent_${Date.now()}`;
-        appendLocalMessage(activeThreadId, newMessageText, messageId);
+        appendLocalMessage(activeThreadId, newMessageText, messageId, undefined, currentReplyToMessage);
 
       } catch (err: any) {
         console.error('Error sending text:', err);
@@ -2741,6 +2782,13 @@ export default function InboxPage() {
 
           const fallbackText = text || item.igd_snippet || (item.item_type ? `[${item.item_type}]` : 'Ek içerik');
 
+          const repliedMessage = item.reply_to_message ? {
+            id: item.reply_to_message.item_id || item.reply_to_message.message_id || '',
+            text_body: item.reply_to_message.text || 'Mesaj',
+            sender_fbid: item.reply_to_message.user_id,
+            content_type: item.reply_to_message.item_type === 'text' ? 'TEXT' : 'ATTACHMENT'
+          } : null;
+
           return {
             id: item.message_id || item.item_id,
             item_id: item.item_id || undefined,
@@ -2761,7 +2809,8 @@ export default function InboxPage() {
             media_id: mediaId,
             like_count: likeCount,
             comment_count: commentCount,
-            reactions: mappedReactions
+            reactions: mappedReactions,
+            reply_to_message: repliedMessage
           };
         });
 
@@ -3796,6 +3845,7 @@ export default function InboxPage() {
       messageId: msg.id,
       text: msg.text_body || msg.content?.text_body || '',
       isOwnMessage: sent,
+      message: msg,
     });
   };
 
@@ -4983,6 +5033,32 @@ export default function InboxPage() {
                           className={`message-bubble ${hasMediaPreview ? 'media-preview-bubble' : (isMediaShare ? 'media-share-bubble' : '')}`}
                           style={{ position: 'relative' }}
                         >
+                          {/* Replied Message Quote bubble decoration */}
+                          {msg.reply_to_message && (
+                            <div style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '8px',
+                              padding: '6px 10px',
+                              background: 'rgba(255, 255, 255, 0.08)',
+                              borderRadius: '6px',
+                              marginBottom: '6px',
+                              borderLeft: '3px solid #0095f6',
+                              fontSize: '11px',
+                              color: 'rgba(255, 255, 255, 0.6)',
+                              maxWidth: '100%',
+                              width: 'fit-content'
+                            }}>
+                              <span style={{
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap'
+                              }}>
+                                {msg.reply_to_message.text_body || 'Ek içerik'}
+                              </span>
+                            </div>
+                          )}
+
                           {hasMediaPreview ? (
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', width: '200px' }}>
                               {/* Author row */}
@@ -5505,6 +5581,56 @@ export default function InboxPage() {
                   </div>
                 )}
 
+                {/* Reply Message Preview panel */}
+                {replyToMessage && (
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    padding: '8px 12px',
+                    background: 'rgba(255, 255, 255, 0.04)',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    borderRadius: '8px',
+                    marginBottom: '4px',
+                    position: 'relative'
+                  }}>
+                    <div style={{
+                      width: '4px',
+                      height: '32px',
+                      background: '#0095f6',
+                      borderRadius: '2px'
+                    }} />
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                      <span style={{ fontSize: '11px', fontWeight: '700', color: '#0095f6' }}>
+                        Yanıtlanan Mesaj
+                      </span>
+                      <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.7)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {replyToMessage.text_body || replyToMessage.content?.text_body || (replyToMessage.media_preview_url ? 'Fotoğraf' : 'Ek içerik')}
+                      </span>
+                    </div>
+                    <button 
+                      type="button" 
+                      onClick={() => setReplyToMessage(null)}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: 'rgba(255,255,255,0.6)',
+                        cursor: 'pointer',
+                        padding: '4px',
+                        fontSize: '18px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        transition: 'color 0.2s'
+                      }}
+                      onMouseEnter={(e) => e.currentTarget.style.color = '#fff'}
+                      onMouseLeave={(e) => e.currentTarget.style.color = 'rgba(255, 255, 255, 0.6)'}
+                    >
+                      &times;
+                    </button>
+                  </div>
+                )}
+
                 <div className="chat-input-container">
                   <input 
                     ref={chatInputRef}
@@ -5520,7 +5646,7 @@ export default function InboxPage() {
                   />
                   
                   <div className="chat-input-buttons">
-                    {(typedMessage.trim() || selectedImageFile) ? (
+                    {(typedMessage.trim() || selectedImageFile || replyToMessage) ? (
                       <button type="submit" className="send-btn">Gönder</button>
                     ) : (
                       <>
@@ -7153,6 +7279,38 @@ export default function InboxPage() {
               <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
             </svg>
             Kopyala
+          </button>
+
+          <button 
+            onClick={() => {
+              if (msgContextMenu.message) {
+                setReplyToMessage(msgContextMenu.message);
+              }
+              setMsgContextMenu(prev => ({ ...prev, visible: false }));
+            }}
+            style={{
+              width: '100%',
+              textAlign: 'left',
+              padding: '10px 12px',
+              background: 'none',
+              border: 'none',
+              color: '#fff',
+              fontSize: '13px',
+              cursor: 'pointer',
+              borderRadius: '6px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              transition: 'background 0.2s'
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.08)'}
+            onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="9 17 4 12 9 7"></polyline>
+              <path d="M20 18v-2a4 4 0 0 0-4-4H4"></path>
+            </svg>
+            Yanıtla
           </button>
 
           <button 

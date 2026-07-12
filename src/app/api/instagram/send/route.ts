@@ -4,7 +4,7 @@ import { DEFAULT_COOKIES, DEFAULT_HEADERS, DEFAULT_DATA } from '@/lib/instagram-
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}));
-    const { threadId, recipientId, text, cookies, headers, data } = body;
+    const { threadId, recipientId, text, cookies, headers, data, replyToMessageId, repliedToItemId, repliedToClientContext } = body;
 
     if ((!threadId && !recipientId) || !text) {
       return NextResponse.json({
@@ -45,9 +45,9 @@ export async function POST(request: NextRequest) {
       ig_thread_igid: threadId || null,
       offline_threading_id: offlineThreadingId,
       recipient_igids: recipientId ? [String(recipientId)] : null,
-      replied_to_client_context: null,
-      replied_to_item_id: null,
-      reply_to_message_id: null,
+      replied_to_client_context: repliedToClientContext || null,
+      replied_to_item_id: repliedToItemId || null,
+      reply_to_message_id: replyToMessageId || null,
       sampled: null,
       text: {
         sensitive_string_value: text

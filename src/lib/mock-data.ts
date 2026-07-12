@@ -32,6 +32,12 @@ export interface InstagramMessage {
     sender_fbid: string;
     reaction_timestamp_ms?: string;
   }[] | null;
+  reply_to_message?: {
+    id: string;
+    text_body: string;
+    sender_fbid?: string;
+    content_type?: string;
+  } | null;
 }
 
 export interface InstagramThread {
