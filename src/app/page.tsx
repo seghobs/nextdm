@@ -415,6 +415,38 @@ export default function InboxPage() {
   const [isForwardingInProgress, setIsForwardingInProgress] = useState(false);
   const [forwardSearchResults, setForwardSearchResults] = useState<{ users: any[], threads: any[] }>({ users: [], threads: [] });
   const [isForwardSearching, setIsForwardSearching] = useState(false);
+  const [suggestedContacts, setSuggestedContacts] = useState<any[]>([]);
+  const [isFetchingSuggested, setIsFetchingSuggested] = useState(false);
+
+  useEffect(() => {
+    if (isForwardModalOpen) {
+      const fetchSuggested = async () => {
+        setIsFetchingSuggested(true);
+        try {
+          const res = await fetch('/api/instagram/suggested_contacts', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              cookies: cookiesRef.current,
+              headers: headersRef.current,
+              data: postDataRef.current
+            })
+          });
+          const result = await res.json();
+          if (res.ok && result.success) {
+            setSuggestedContacts(result.users || []);
+          }
+        } catch (err) {
+          console.error('Error fetching suggested contacts:', err);
+        } finally {
+          setIsFetchingSuggested(false);
+        }
+      };
+      fetchSuggested();
+    }
+  }, [isForwardModalOpen]);
   const [isPollingEnabled, setIsPollingEnabled] = useState<boolean>(() => {
     if (typeof window === 'undefined') return true;
     try {
@@ -6982,92 +7014,198 @@ export default function InboxPage() {
                   );
                 }
 
-                // Default local list
+                // Default local list with suggested contacts support
                 const eligibleThreads = threads.filter(t => t.folder !== 'PENDING');
-                if (eligibleThreads.length === 0) {
-                  return (
-                    <div style={{ padding: '40px 20px', textAlign: 'center', color: 'rgba(255, 255, 255, 0.4)', fontSize: '13px' }}>
-                      Sohbet bulunamadı.
-                    </div>
-                  );
-                }
-
-                return eligibleThreads.map(thread => {
-                  const partner = thread.users?.[0] || { full_name: thread.thread_title, username: '', profile_pic_url: '' };
-                  const displayName = thread.is_group
-                    ? (thread.thread_title || 'Grup Sohbeti')
-                    : (partner.full_name || partner.username);
-                  const isSelected = !!forwardSelectedRecipients[thread.id];
-                  const avatar = thread.is_group ? thread.thread_image_url : partner.profile_pic_url;
-
-                  return (
-                    <div 
-                      key={thread.id}
-                      onClick={() => {
-                        setForwardSelectedRecipients(prev => {
-                          const copy = { ...prev };
-                          if (copy[thread.id]) {
-                            delete copy[thread.id];
-                          } else {
-                            if (Object.keys(copy).length >= 5) {
-                              alert('Aynı anda en fazla 5 kişiye mesaj yönlendirebilirsiniz.');
-                              return prev;
-                            }
-                            copy[thread.id] = { id: thread.id, name: displayName, avatar: avatar || undefined };
-                          }
-                          return copy;
-                        });
-                      }}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        padding: '8px 20px',
-                        cursor: 'pointer',
-                        background: isSelected ? 'rgba(255, 255, 255, 0.03)' : 'transparent',
-                        transition: 'background 0.2s'
-                      }}
-                      onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.015)'; }}
-                      onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = 'transparent'; }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        <img 
-                          src={avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=80&h=80&fit=crop&q=80"}
-                          alt={displayName}
-                          style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' }}
-                          onError={(e) => {
-                            (e.target as HTMLImageElement).src = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=80&h=80&fit=crop&q=80";
-                          }}
-                        />
-                        <div style={{ display: 'flex', flexDirection: 'column' }}>
-                          <span style={{ fontSize: '13px', fontWeight: '600', color: '#fff' }}>{displayName}</span>
-                          {!thread.is_group && partner.username && (
-                            <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)' }}>@{partner.username}</span>
-                          )}
+                
+                return (
+                  <>
+                    {/* Recent Chats Section */}
+                    {eligibleThreads.length > 0 && (
+                      <>
+                        <div style={{ padding: '12px 20px 6px 20px', fontSize: '11px', fontWeight: '700', color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                          Son Sohbetler
                         </div>
-                      </div>
+                        {eligibleThreads.map(thread => {
+                          const partner = thread.users?.[0] || { full_name: thread.thread_title, username: '', profile_pic_url: '' };
+                          const displayName = thread.is_group
+                            ? (thread.thread_title || 'Grup Sohbeti')
+                            : (partner.full_name || partner.username);
+                          const isSelected = !!forwardSelectedRecipients[thread.id];
+                          const avatar = thread.is_group ? thread.thread_image_url : partner.profile_pic_url;
 
-                      {/* Circular Selection Checkbox */}
-                      <div style={{
-                        width: '20px',
-                        height: '20px',
-                        borderRadius: '50%',
-                        border: isSelected ? 'none' : '2.5px solid rgba(255, 255, 255, 0.2)',
-                        background: isSelected ? '#0095f6' : 'transparent',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        transition: 'all 0.2s'
-                      }}>
-                        {isSelected && (
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                            <polyline points="20 6 9 17 4 12"></polyline>
-                          </svg>
-                        )}
+                          return (
+                            <div 
+                              key={thread.id}
+                              onClick={() => {
+                                setForwardSelectedRecipients(prev => {
+                                  const copy = { ...prev };
+                                  if (copy[thread.id]) {
+                                    delete copy[thread.id];
+                                  } else {
+                                    if (Object.keys(copy).length >= 5) {
+                                      alert('Aynı anda en fazla 5 kişiye mesaj yönlendirebilirsiniz.');
+                                      return prev;
+                                    }
+                                    copy[thread.id] = { id: thread.id, name: displayName, avatar: avatar || undefined };
+                                  }
+                                  return copy;
+                                });
+                              }}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                padding: '8px 20px',
+                                cursor: 'pointer',
+                                background: isSelected ? 'rgba(255, 255, 255, 0.03)' : 'transparent',
+                                transition: 'background 0.2s'
+                              }}
+                              onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.015)'; }}
+                              onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = 'transparent'; }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                <img 
+                                  src={avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=80&h=80&fit=crop&q=80"}
+                                  alt={displayName}
+                                  style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' }}
+                                  onError={(e) => {
+                                    (e.target as HTMLImageElement).src = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=80&h=80&fit=crop&q=80";
+                                  }}
+                                />
+                                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                  <span style={{ fontSize: '13px', fontWeight: '600', color: '#fff' }}>{displayName}</span>
+                                  <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)' }}>
+                                    {thread.is_group ? 'Grup Sohbeti' : `@${partner.username || 'user'}`}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div style={{
+                                width: '20px',
+                                height: '20px',
+                                borderRadius: '50%',
+                                border: isSelected ? 'none' : '2.5px solid rgba(255, 255, 255, 0.2)',
+                                background: isSelected ? '#0095f6' : 'transparent',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                transition: 'all 0.2s'
+                              }}>
+                                {isSelected && (
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                                    <polyline points="20 6 9 17 4 12"></polyline>
+                                  </svg>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </>
+                    )}
+
+                    {/* Suggested Contacts Section */}
+                    {isFetchingSuggested ? (
+                      <div style={{ padding: '20px', textAlign: 'center', color: 'rgba(255, 255, 255, 0.3)' }}>
+                        <svg className="refresh-spinning" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ margin: '0 auto' }}>
+                          <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
+                        </svg>
+                        <div style={{ marginTop: '6px', fontSize: '11px' }}>Öneriler yükleniyor...</div>
                       </div>
-                    </div>
-                  );
-                });
+                    ) : suggestedContacts.length > 0 && (
+                      <>
+                        <div style={{ padding: '16px 20px 6px 20px', fontSize: '11px', fontWeight: '700', color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                          Önerilen Kişiler
+                        </div>
+                        {suggestedContacts.map(user => {
+                          const id = user.share_sheet_item_id || user.pk;
+                          const displayName = user.full_name || user.username;
+                          const avatar = user.profile_pic_url;
+                          const isSelected = !!forwardSelectedRecipients[id];
+
+                          return (
+                            <div 
+                              key={id}
+                              onClick={() => {
+                                setForwardSelectedRecipients(prev => {
+                                  const copy = { ...prev };
+                                  if (copy[id]) {
+                                    delete copy[id];
+                                  } else {
+                                    if (Object.keys(copy).length >= 5) {
+                                      alert('Aynı anda en fazla 5 kişiye mesaj yönlendirebilirsiniz.');
+                                      return prev;
+                                    }
+                                    copy[id] = { id, name: displayName, avatar: avatar || undefined };
+                                  }
+                                  return copy;
+                                });
+                              }}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                padding: '8px 20px',
+                                cursor: 'pointer',
+                                background: isSelected ? 'rgba(255, 255, 255, 0.03)' : 'transparent',
+                                transition: 'background 0.2s'
+                              }}
+                              onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.015)'; }}
+                              onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = 'transparent'; }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                <img 
+                                  src={avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=80&h=80&fit=crop&q=80"}
+                                  alt={displayName}
+                                  style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' }}
+                                  onError={(e) => {
+                                    (e.target as HTMLImageElement).src = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=80&h=80&fit=crop&q=80";
+                                  }}
+                                />
+                                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                    <span style={{ fontSize: '13px', fontWeight: '600', color: '#fff' }}>{displayName}</span>
+                                    {user.is_verified && (
+                                      <span style={{ color: '#0095f6', display: 'flex', alignItems: 'center' }} title="Onaylı Hesap">
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                                          <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"></path>
+                                        </svg>
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)' }}>@{user.username}</span>
+                                </div>
+                              </div>
+
+                              <div style={{
+                                width: '20px',
+                                height: '20px',
+                                borderRadius: '50%',
+                                border: isSelected ? 'none' : '2.5px solid rgba(255, 255, 255, 0.2)',
+                                background: isSelected ? '#0095f6' : 'transparent',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                transition: 'all 0.2s'
+                              }}>
+                                {isSelected && (
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                                    <polyline points="20 6 9 17 4 12"></polyline>
+                                  </svg>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </>
+                    )}
+
+                    {eligibleThreads.length === 0 && suggestedContacts.length === 0 && !isFetchingSuggested && (
+                      <div style={{ padding: '40px 20px', textAlign: 'center', color: 'rgba(255, 255, 255, 0.4)', fontSize: '13px' }}>
+                        Sohbet bulunamadı.
+                      </div>
+                    )}
+                  </>
+                );
               })()}
             </div>
 
