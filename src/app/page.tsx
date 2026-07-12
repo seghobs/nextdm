@@ -400,9 +400,11 @@ export default function InboxPage() {
   const [typedMessage, setTypedMessage] = useState('');
   const [isForwardModalOpen, setIsForwardModalOpen] = useState(false);
   const [forwardMessageText, setForwardMessageText] = useState('');
-  const [forwardSelectedThreads, setForwardSelectedThreads] = useState<Set<string>>(new Set());
+  const [forwardSelectedRecipients, setForwardSelectedRecipients] = useState<Record<string, { id: string, name: string, avatar?: string }>>({});
   const [forwardSearchQuery, setForwardSearchQuery] = useState('');
   const [isForwardingInProgress, setIsForwardingInProgress] = useState(false);
+  const [forwardSearchResults, setForwardSearchResults] = useState<{ users: any[], threads: any[] }>({ users: [], threads: [] });
+  const [isForwardSearching, setIsForwardSearching] = useState(false);
   const [isPollingEnabled, setIsPollingEnabled] = useState<boolean>(() => {
     if (typeof window === 'undefined') return true;
     try {
@@ -809,6 +811,48 @@ export default function InboxPage() {
   useEffect(() => {
     threadsRef.current = threads;
   }, [threads]);
+
+  // Debounced Instagram forwarding search
+  useEffect(() => {
+    if (!forwardSearchQuery.trim()) {
+      setForwardSearchResults({ users: [], threads: [] });
+      setIsForwardSearching(false);
+      return;
+    }
+
+    setIsForwardSearching(true);
+
+    const delayDebounceFn = setTimeout(async () => {
+      try {
+        const res = await fetch('/api/instagram/search_forwarding', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            searchText: forwardSearchQuery,
+            cookies: cookiesRef.current,
+            headers: headersRef.current,
+            data: postDataRef.current
+          })
+        });
+
+        const result = await res.json();
+        if (res.ok && result.success) {
+          setForwardSearchResults({
+            users: result.users || [],
+            threads: result.threads || []
+          });
+        }
+      } catch (err) {
+        console.error('Error fetching forwarding search results:', err);
+      } finally {
+        setIsForwardSearching(false);
+      }
+    }, 400);
+
+    return () => clearTimeout(delayDebounceFn);
+  }, [forwardSearchQuery]);
 
   // Track window focus time to ignore double-clicks that occur to focus the window
   useEffect(() => {
@@ -3555,9 +3599,10 @@ export default function InboxPage() {
   };
 
   const handleForwardMessage = async () => {
-    if (forwardSelectedThreads.size === 0 || !forwardMessageText.trim()) return;
+    const selectedIds = Object.keys(forwardSelectedRecipients);
+    if (selectedIds.length === 0 || !forwardMessageText.trim()) return;
 
-    if (forwardSelectedThreads.size > 5) {
+    if (selectedIds.length > 5) {
       alert('Aynı anda en fazla 5 kişiye mesaj yönlendirebilirsiniz.');
       return;
     }
@@ -3565,7 +3610,7 @@ export default function InboxPage() {
     setIsForwardingInProgress(true);
 
     try {
-      const promises = Array.from(forwardSelectedThreads).map(async (threadId) => {
+      const promises = selectedIds.map(async (threadId) => {
         const thread = threads.find(t => t.id === threadId);
         const targetThreadId = thread?.thread_id || threadId;
 
@@ -3591,14 +3636,14 @@ export default function InboxPage() {
 
         const result = await res.json();
         if (!res.ok || !result.success) {
-          console.error(`Failed to forward to thread ${threadId}:`, result.error || 'Unknown error');
+          console.error(`Failed to forward to recipient ${threadId}:`, result.error || 'Unknown error');
         }
       });
 
       await Promise.all(promises);
       console.log('Successfully forwarded message to select recipients!');
       setIsForwardModalOpen(false);
-      setForwardSelectedThreads(new Set());
+      setForwardSelectedRecipients({});
       setForwardMessageText('');
     } catch (err) {
       console.error('Error forwarding message:', err);
@@ -6147,17 +6192,12 @@ export default function InboxPage() {
               </div>
               
               {/* Selected recipient tokens list */}
-              {forwardSelectedThreads.size > 0 && (
+              {Object.keys(forwardSelectedRecipients).length > 0 && (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', maxHeight: '72px', overflowY: 'auto', paddingBottom: '4px' }}>
-                  {Array.from(forwardSelectedThreads).map(threadId => {
-                    const threadObj = threads.find(t => t.id === threadId);
-                    const partner = threadObj?.users?.[0];
-                    const label = threadObj?.is_group
-                      ? (threadObj?.thread_title || 'Grup Sohbeti')
-                      : (partner?.full_name || partner?.username || 'Kullanıcı');
+                  {Object.values(forwardSelectedRecipients).map(recipient => {
                     return (
                       <div 
-                        key={threadId}
+                        key={recipient.id}
                         style={{
                           background: 'rgba(0, 149, 246, 0.15)',
                           border: '1px solid rgba(0, 149, 246, 0.3)',
@@ -6170,12 +6210,12 @@ export default function InboxPage() {
                           color: '#38bdf8'
                         }}
                       >
-                        <span>{label}</span>
+                        <span>{recipient.name}</span>
                         <button 
                           onClick={() => {
-                            setForwardSelectedThreads(prev => {
-                              const copy = new Set(prev);
-                              copy.delete(threadId);
+                            setForwardSelectedRecipients(prev => {
+                              const copy = { ...prev };
+                              delete copy[recipient.id];
                               return copy;
                             });
                           }}
@@ -6227,19 +6267,192 @@ export default function InboxPage() {
             {/* Recipient list */}
             <div style={{ flex: 1, overflowY: 'auto', padding: '10px 0' }}>
               {(() => {
-                // Filter threads (exclude pending)
-                const search = forwardSearchQuery.toLowerCase().trim();
-                const eligibleThreads = threads
-                  .filter(t => t.folder !== 'PENDING')
-                  .filter(t => {
-                    if (!search) return true;
-                    const title = t.thread_title?.toLowerCase() || '';
-                    const partner = t.users?.[0];
-                    const uName = partner?.username?.toLowerCase() || '';
-                    const fName = partner?.full_name?.toLowerCase() || '';
-                    return title.includes(search) || uName.includes(search) || fName.includes(search);
-                  });
+                if (isForwardSearching) {
+                  return (
+                    <div style={{ padding: '40px 20px', textAlign: 'center', color: 'rgba(255, 255, 255, 0.4)' }}>
+                      <svg className="refresh-spinning" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ margin: '0 auto' }}>
+                        <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
+                      </svg>
+                      <div style={{ marginTop: '8px', fontSize: '13px' }}>Aranıyor...</div>
+                    </div>
+                  );
+                }
 
+                // If searching, render results from the API
+                if (forwardSearchQuery.trim()) {
+                  const users = forwardSearchResults.users || [];
+                  const threadsFromSearch = forwardSearchResults.threads || [];
+
+                  if (users.length === 0 && threadsFromSearch.length === 0) {
+                    return (
+                      <div style={{ padding: '40px 20px', textAlign: 'center', color: 'rgba(255, 255, 255, 0.4)', fontSize: '13px' }}>
+                        Sonuç bulunamadı.
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <>
+                      {/* Threads section */}
+                      {threadsFromSearch.map(thread => {
+                        const id = thread.thread_id || thread.share_sheet_item_id;
+                        const displayName = thread.thread_title || 'Grup Sohbeti';
+                        const avatar = thread.thread_image_url || thread.users?.[0]?.profile_pic_url;
+                        const isSelected = !!forwardSelectedRecipients[id];
+
+                        return (
+                          <div 
+                            key={id}
+                            onClick={() => {
+                              setForwardSelectedRecipients(prev => {
+                                const copy = { ...prev };
+                                if (copy[id]) {
+                                  delete copy[id];
+                                } else {
+                                  if (Object.keys(copy).length >= 5) {
+                                    alert('Aynı anda en fazla 5 kişiye mesaj yönlendirebilirsiniz.');
+                                    return prev;
+                                  }
+                                  copy[id] = { id, name: displayName, avatar: avatar || undefined };
+                                }
+                                return copy;
+                              });
+                            }}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              padding: '8px 20px',
+                              cursor: 'pointer',
+                              background: isSelected ? 'rgba(255, 255, 255, 0.03)' : 'transparent',
+                              transition: 'background 0.2s'
+                            }}
+                            onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.015)'; }}
+                            onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = 'transparent'; }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                              <img 
+                                src={avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=80&h=80&fit=crop&q=80"}
+                                alt={displayName}
+                                style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' }}
+                                onError={(e) => {
+                                  (e.target as HTMLImageElement).src = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=80&h=80&fit=crop&q=80";
+                                }}
+                              />
+                              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                <span style={{ fontSize: '13px', fontWeight: '600', color: '#fff' }}>{displayName}</span>
+                                <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)' }}>Grup Sohbeti</span>
+                              </div>
+                            </div>
+
+                            <div style={{
+                              width: '20px',
+                              height: '20px',
+                              borderRadius: '50%',
+                              border: isSelected ? 'none' : '2.5px solid rgba(255, 255, 255, 0.2)',
+                              background: isSelected ? '#0095f6' : 'transparent',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              transition: 'all 0.2s'
+                            }}>
+                              {isSelected && (
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                                  <polyline points="20 6 9 17 4 12"></polyline>
+                                </svg>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {/* Users section */}
+                      {users.map(user => {
+                        const id = user.share_sheet_item_id || user.pk;
+                        const displayName = user.full_name || user.username;
+                        const avatar = user.profile_pic_url;
+                        const isSelected = !!forwardSelectedRecipients[id];
+
+                        return (
+                          <div 
+                            key={id}
+                            onClick={() => {
+                              setForwardSelectedRecipients(prev => {
+                                const copy = { ...prev };
+                                if (copy[id]) {
+                                  delete copy[id];
+                                } else {
+                                  if (Object.keys(copy).length >= 5) {
+                                    alert('Aynı anda en fazla 5 kişiye mesaj yönlendirebilirsiniz.');
+                                    return prev;
+                                  }
+                                  copy[id] = { id, name: displayName, avatar: avatar || undefined };
+                                }
+                                return copy;
+                              });
+                            }}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              padding: '8px 20px',
+                              cursor: 'pointer',
+                              background: isSelected ? 'rgba(255, 255, 255, 0.03)' : 'transparent',
+                              transition: 'background 0.2s'
+                            }}
+                            onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.015)'; }}
+                            onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = 'transparent'; }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                              <img 
+                                src={avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=80&h=80&fit=crop&q=80"}
+                                alt={displayName}
+                                style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' }}
+                                onError={(e) => {
+                                  (e.target as HTMLImageElement).src = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=80&h=80&fit=crop&q=80";
+                                }}
+                              />
+                              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                  <span style={{ fontSize: '13px', fontWeight: '600', color: '#fff' }}>{displayName}</span>
+                                  {user.is_verified && (
+                                    <span style={{ color: '#0095f6', display: 'flex', alignItems: 'center' }} title="Onaylı Hesap">
+                                      <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                                        <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"></path>
+                                      </svg>
+                                    </span>
+                                  )}
+                                </div>
+                                <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)' }}>@{user.username}</span>
+                              </div>
+                            </div>
+
+                            <div style={{
+                              width: '20px',
+                              height: '20px',
+                              borderRadius: '50%',
+                              border: isSelected ? 'none' : '2.5px solid rgba(255, 255, 255, 0.2)',
+                              background: isSelected ? '#0095f6' : 'transparent',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              transition: 'all 0.2s'
+                            }}>
+                              {isSelected && (
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                                  <polyline points="20 6 9 17 4 12"></polyline>
+                                </svg>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </>
+                  );
+                }
+
+                // Default local list
+                const eligibleThreads = threads.filter(t => t.folder !== 'PENDING');
                 if (eligibleThreads.length === 0) {
                   return (
                     <div style={{ padding: '40px 20px', textAlign: 'center', color: 'rgba(255, 255, 255, 0.4)', fontSize: '13px' }}>
@@ -6253,23 +6466,23 @@ export default function InboxPage() {
                   const displayName = thread.is_group
                     ? (thread.thread_title || 'Grup Sohbeti')
                     : (partner.full_name || partner.username);
-                  const isSelected = forwardSelectedThreads.has(thread.id);
+                  const isSelected = !!forwardSelectedRecipients[thread.id];
                   const avatar = thread.is_group ? thread.thread_image_url : partner.profile_pic_url;
 
                   return (
                     <div 
                       key={thread.id}
                       onClick={() => {
-                        setForwardSelectedThreads(prev => {
-                          const copy = new Set(prev);
-                          if (copy.has(thread.id)) {
-                            copy.delete(thread.id);
+                        setForwardSelectedRecipients(prev => {
+                          const copy = { ...prev };
+                          if (copy[thread.id]) {
+                            delete copy[thread.id];
                           } else {
-                            if (copy.size >= 5) {
+                            if (Object.keys(copy).length >= 5) {
                               alert('Aynı anda en fazla 5 kişiye mesaj yönlendirebilirsiniz.');
                               return prev;
                             }
-                            copy.add(thread.id);
+                            copy[thread.id] = { id: thread.id, name: displayName, avatar: avatar || undefined };
                           }
                           return copy;
                         });
@@ -6335,18 +6548,18 @@ export default function InboxPage() {
               justifyContent: 'flex-end'
             }}>
               <button 
-                disabled={forwardSelectedThreads.size === 0 || isForwardingInProgress}
+                disabled={Object.keys(forwardSelectedRecipients).length === 0 || isForwardingInProgress}
                 onClick={handleForwardMessage}
                 style={{
                   width: '100%',
                   padding: '10px 0',
-                  background: forwardSelectedThreads.size === 0 ? 'rgba(0, 149, 246, 0.4)' : '#0095f6',
-                  color: forwardSelectedThreads.size === 0 ? 'rgba(255, 255, 255, 0.5)' : '#fff',
+                  background: Object.keys(forwardSelectedRecipients).length === 0 ? 'rgba(0, 149, 246, 0.4)' : '#0095f6',
+                  color: Object.keys(forwardSelectedRecipients).length === 0 ? 'rgba(255, 255, 255, 0.5)' : '#fff',
                   border: 'none',
                   borderRadius: '8px',
                   fontSize: '13px',
                   fontWeight: '600',
-                  cursor: forwardSelectedThreads.size === 0 || isForwardingInProgress ? 'not-allowed' : 'pointer',
+                  cursor: Object.keys(forwardSelectedRecipients).length === 0 || isForwardingInProgress ? 'not-allowed' : 'pointer',
                   transition: 'background 0.2s',
                   display: 'flex',
                   alignItems: 'center',
@@ -6354,12 +6567,12 @@ export default function InboxPage() {
                   gap: '8px'
                 }}
                 onMouseEnter={(e) => {
-                  if (forwardSelectedThreads.size > 0 && !isForwardingInProgress) {
+                  if (Object.keys(forwardSelectedRecipients).length > 0 && !isForwardingInProgress) {
                     e.currentTarget.style.background = '#1877f2';
                   }
                 }}
                 onMouseLeave={(e) => {
-                  if (forwardSelectedThreads.size > 0 && !isForwardingInProgress) {
+                  if (Object.keys(forwardSelectedRecipients).length > 0 && !isForwardingInProgress) {
                     e.currentTarget.style.background = '#0095f6';
                   }
                 }}
@@ -6372,7 +6585,7 @@ export default function InboxPage() {
                     <span>Yönlendiriliyor...</span>
                   </>
                 ) : (
-                  <span>Gönder ({forwardSelectedThreads.size})</span>
+                  <span>Gönder ({Object.keys(forwardSelectedRecipients).length})</span>
                 )}
               </button>
             </div>
@@ -6762,7 +6975,7 @@ export default function InboxPage() {
           <button 
             onClick={() => {
               setForwardMessageText(msgContextMenu.text);
-              setForwardSelectedThreads(new Set());
+              setForwardSelectedRecipients({});
               setForwardSearchQuery('');
               setIsForwardModalOpen(true);
               setMsgContextMenu(prev => ({ ...prev, visible: false }));
