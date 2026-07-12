@@ -3503,6 +3503,52 @@ export default function InboxPage() {
     }
   };
 
+  const handlePinThread = async (threadId: string, shouldPin: boolean) => {
+    // Find the thread to get its thread_fbid
+    const thread = threads.find(t => t.id === threadId);
+    if (!thread) return;
+
+    const threadFbid = thread.thread_fbid || thread.id;
+
+    // Instantly update local thread's is_pin state in UI
+    setThreads(prevThreads => 
+      prevThreads.map(t => t.id === threadId ? { ...t, is_pin: shouldPin } : t)
+    );
+
+    try {
+      const res = await fetch('/api/instagram/pin_thread', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          threadFbid,
+          pin: shouldPin,
+          cookies: cookiesRef.current,
+          headers: headersRef.current,
+          data: postDataRef.current
+        })
+      });
+
+      const result = await res.json();
+      if (!res.ok || !result.success) {
+        console.error('Failed to pin/unpin thread on Instagram:', result.error || 'Unknown error');
+        // Rollback state on error
+        setThreads(prevThreads => 
+          prevThreads.map(t => t.id === threadId ? { ...t, is_pin: !shouldPin } : t)
+        );
+      } else {
+        console.log(`Successfully ${shouldPin ? 'pinned' : 'unpinned'} thread on Instagram:`, threadFbid);
+      }
+    } catch (err) {
+      console.error('Network error pinning thread:', err);
+      // Rollback state on error
+      setThreads(prevThreads => 
+        prevThreads.map(t => t.id === threadId ? { ...t, is_pin: !shouldPin } : t)
+      );
+    }
+  };
+
   const handleMsgContextMenu = (e: React.MouseEvent, msg: InstagramMessage) => {
     if (msg.content_type !== 'TEXT') return;
 
@@ -3745,10 +3791,22 @@ export default function InboxPage() {
       }
     });
 
-    if (!searchQuery.trim()) return folderThreads;
+    // Sort: pinned threads first, then by last_activity_timestamp_ms descending
+    const sortedFolderThreads = [...folderThreads].sort((a, b) => {
+      const pinA = a.is_pin ? 1 : 0;
+      const pinB = b.is_pin ? 1 : 0;
+      if (pinB !== pinA) {
+        return pinB - pinA;
+      }
+      const timeA = Number(a.last_activity_timestamp_ms || 0);
+      const timeB = Number(b.last_activity_timestamp_ms || 0);
+      return timeB - timeA;
+    });
+
+    if (!searchQuery.trim()) return sortedFolderThreads;
     
     const q = searchQuery.toLowerCase().trim();
-    return folderThreads.filter(thread => {
+    return sortedFolderThreads.filter(thread => {
       const titleMatch = thread.thread_title?.toLowerCase().includes(q) || false;
       const userMatch = thread.users?.some(
         u => u.username?.toLowerCase().includes(q) || u.full_name?.toLowerCase().includes(q)
@@ -4365,6 +4423,13 @@ export default function InboxPage() {
                           <span className="verified-badge" title="Onaylı Hesap">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
                               <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"></path>
+                            </svg>
+                          </span>
+                        )}
+                        {thread.is_pin && (
+                          <span title="Sabitlenmiş" style={{ marginLeft: '6px', display: 'inline-flex', alignItems: 'center', color: '#a8a8a8' }}>
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style={{ transform: 'rotate(45deg)' }}>
+                              <path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"></path>
                             </svg>
                           </span>
                         )}
@@ -6209,6 +6274,41 @@ export default function InboxPage() {
             </svg>
             Genel (General) Klasöre Taşı
           </button>
+
+          {(() => {
+            const isPinned = threads.find(t => t.id === threadContextMenu.threadId)?.is_pin || false;
+            return (
+              <button 
+                onClick={() => {
+                  handlePinThread(threadContextMenu.threadId, !isPinned);
+                  setThreadContextMenu(prev => ({ ...prev, visible: false }));
+                }}
+                style={{
+                  width: '100%',
+                  textAlign: 'left',
+                  padding: '10px 12px',
+                  background: 'none',
+                  border: 'none',
+                  color: '#fff',
+                  fontSize: '13px',
+                  cursor: 'pointer',
+                  borderRadius: '6px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  transition: 'background 0.2s',
+                  marginTop: '2px'
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.08)'}
+                onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#a8a8a8" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ transform: 'rotate(45deg)' }}>
+                  <path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"></path>
+                </svg>
+                {isPinned ? 'Sabitlemeyi Kaldır' : 'Sohbeti Sabitle'}
+              </button>
+            );
+          })()}
 
           <button 
             onClick={() => {
