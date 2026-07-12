@@ -1185,7 +1185,12 @@ export default function InboxPage() {
         handleUpdateCookies(result.cookies);
       }
 
-      const items = result.items || [];
+      const items = (result.items || []).filter((item: any) => {
+        if (item.item_type === 'like' || item.item_type === 'reaction') {
+          return false;
+        }
+        return true;
+      });
       const mappedMessages: InstagramMessage[] = items.map((item: any) => {
         let text = item.text || '';
         let previewUrl: string | null = null;
@@ -1301,6 +1306,39 @@ export default function InboxPage() {
           text = text || (item.media.video_versions ? 'Bir video gönderdi.' : 'Bir fotoğraf gönderdi.');
         }
 
+        // Map REST reactions
+        let mappedReactions: any[] = [];
+        if (item.reactions) {
+          if (Array.isArray(item.reactions)) {
+            mappedReactions = item.reactions.map((r: any) => ({
+              reaction: r.reaction || r.emoji || '❤️',
+              sender_fbid: String(r.sender_id || r.sender_fbid || ''),
+              reaction_timestamp_ms: r.timestamp ? String(Math.floor(Number(r.timestamp) / 1000)) : undefined
+            }));
+          } else if (typeof item.reactions === 'object') {
+            const likes = item.reactions.likes || [];
+            if (Array.isArray(likes)) {
+              likes.forEach((r: any) => {
+                mappedReactions.push({
+                  reaction: '❤️',
+                  sender_fbid: String(r.sender_id || ''),
+                  reaction_timestamp_ms: r.timestamp ? String(Math.floor(Number(r.timestamp) / 1000)) : undefined
+                });
+              });
+            }
+            const emojis = item.reactions.emojis || item.reactions.reactions || [];
+            if (Array.isArray(emojis)) {
+              emojis.forEach((r: any) => {
+                mappedReactions.push({
+                  reaction: r.emoji || r.reaction || '❤️',
+                  sender_fbid: String(r.sender_id || r.sender_fbid || ''),
+                  reaction_timestamp_ms: r.timestamp ? String(Math.floor(Number(r.timestamp) / 1000)) : undefined
+                });
+              });
+            }
+          }
+        }
+
         const fallbackText = text || item.igd_snippet || (item.item_type ? `[${item.item_type}]` : 'Ek içerik');
 
         return {
@@ -1321,7 +1359,8 @@ export default function InboxPage() {
           media_type: mediaType as any,
           media_id: mediaId,
           like_count: likeCount,
-          comment_count: commentCount
+          comment_count: commentCount,
+          reactions: mappedReactions
         };
       });
 
@@ -2307,7 +2346,12 @@ export default function InboxPage() {
         handleUpdateCookies(result.cookies);
       }
 
-      const items = result.items || [];
+      const items = (result.items || []).filter((item: any) => {
+        if (item.item_type === 'like' || item.item_type === 'reaction') {
+          return false;
+        }
+        return true;
+      });
       if (items.length > 0) {
         // Map incoming REST items to InstagramMessage structure
         const mappedMessages: InstagramMessage[] = items.map((item: any) => {
@@ -2425,6 +2469,39 @@ export default function InboxPage() {
             text = text || (item.media.video_versions ? 'Bir video gönderdi.' : 'Bir fotoğraf gönderdi.');
           }
 
+          // Map REST reactions
+          let mappedReactions: any[] = [];
+          if (item.reactions) {
+            if (Array.isArray(item.reactions)) {
+              mappedReactions = item.reactions.map((r: any) => ({
+                reaction: r.reaction || r.emoji || '❤️',
+                sender_fbid: String(r.sender_id || r.sender_fbid || ''),
+                reaction_timestamp_ms: r.timestamp ? String(Math.floor(Number(r.timestamp) / 1000)) : undefined
+              }));
+            } else if (typeof item.reactions === 'object') {
+              const likes = item.reactions.likes || [];
+              if (Array.isArray(likes)) {
+                likes.forEach((r: any) => {
+                  mappedReactions.push({
+                    reaction: '❤️',
+                    sender_fbid: String(r.sender_id || ''),
+                    reaction_timestamp_ms: r.timestamp ? String(Math.floor(Number(r.timestamp) / 1000)) : undefined
+                  });
+                });
+              }
+              const emojis = item.reactions.emojis || item.reactions.reactions || [];
+              if (Array.isArray(emojis)) {
+                emojis.forEach((r: any) => {
+                  mappedReactions.push({
+                    reaction: r.emoji || r.reaction || '❤️',
+                    sender_fbid: String(r.sender_id || r.sender_fbid || ''),
+                    reaction_timestamp_ms: r.timestamp ? String(Math.floor(Number(r.timestamp) / 1000)) : undefined
+                  });
+                });
+              }
+            }
+          }
+
           const fallbackText = text || item.igd_snippet || (item.item_type ? `[${item.item_type}]` : 'Ek içerik');
 
           return {
@@ -2445,7 +2522,8 @@ export default function InboxPage() {
             media_type: mediaType as any,
             media_id: mediaId,
             like_count: likeCount,
-            comment_count: commentCount
+            comment_count: commentCount,
+            reactions: mappedReactions
           };
         });
 
