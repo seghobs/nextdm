@@ -3559,6 +3559,7 @@ export default function InboxPage() {
           threadId: activeThreadId,
           thread_id: activeThread.thread_id,
           messageId,
+          itemId: msg.item_id || (!msg.id.startsWith('mid.$') ? msg.id : ''),
           emoji,
           reactionStatus,
           cookies: cookiesRef.current,

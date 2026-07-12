@@ -4,7 +4,7 @@ import { DEFAULT_COOKIES, DEFAULT_HEADERS, DEFAULT_DATA } from '@/lib/instagram-
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}));
-    const { threadId, thread_id, messageId, emoji, reactionStatus, cookies, headers, data } = body;
+    const { threadId, thread_id, messageId, itemId, emoji, reactionStatus, cookies, headers, data } = body;
 
     // Validate parameters
     if ((!threadId && !thread_id) || !messageId || !emoji) {
@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
     const variablesObj = {
       input: {
         emoji: String(emoji),
-        item_id: '',
+        item_id: String(itemId || ''),
         message_id: messageId,
         reaction_status: String(reactionStatus || 'created'), // 'created' to add, 'deleted' to remove
         thread_id: String(targetThreadId)
