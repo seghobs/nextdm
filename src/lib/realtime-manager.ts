@@ -171,6 +171,11 @@ export async function startRealtimeBridge(cookies: Record<string, string>, seqId
       const threadId = messageData.thread_id;
       const itemId = messageData.item_id;
       const senderId = messageData.user_id;
+      
+      if (!senderId) {
+        return; // Ignore system/empty packets without a sender ID
+      }
+      
       const text = messageData.text || '';
       // Convert microsecond timestamp to millisecond string
       const timestampMs = Math.floor(Number(messageData.timestamp || Date.now() * 1000) / 1000).toString();
