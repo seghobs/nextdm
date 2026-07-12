@@ -1129,9 +1129,7 @@ export default function InboxPage() {
     };
 
     eventSource.onerror = (err) => {
-      console.error('[Realtime] Realtime EventSource encountered an error, closing:', err);
-      eventSource.close();
-      setIsPollingEnabled(false);
+      console.warn('[Realtime] EventSource connection issue. Browser is automatically reconnecting...');
     };
 
     return () => {
