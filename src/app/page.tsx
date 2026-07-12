@@ -63,7 +63,10 @@ const deduplicateMessageEdges = (edges: any[]) => {
             ...node.content,
             // Keep the richer content body
             xma: preferredForMedia.content?.xma || fallbackForMedia.content?.xma || eNode.content?.xma || node.content?.xma || null
-          }
+          },
+          // PRESERVE REPLY ATTRIBUTES
+          reply_to_message: eNode.reply_to_message || node.reply_to_message || null,
+          client_context: eNode.client_context || node.client_context || null
         };
         foundDuplicate = true;
         break;
@@ -74,7 +77,12 @@ const deduplicateMessageEdges = (edges: any[]) => {
       if (timeDiff < 2000 && eText === nodeText) {
         // If the existing one is temporary, and current is official, upgrade the existing one to official ID
         if (!eNode.id.startsWith('mid.$') && node.id.startsWith('mid.$')) {
-          existingEdge.node = node;
+          existingEdge.node = {
+            ...node,
+            // PRESERVE REPLY ATTRIBUTES
+            reply_to_message: eNode.reply_to_message || node.reply_to_message || null,
+            client_context: eNode.client_context || node.client_context || null
+          };
         }
         foundDuplicate = true;
         break;
