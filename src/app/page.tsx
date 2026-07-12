@@ -54,6 +54,7 @@ const deduplicateMessageEdges = (edges: any[]) => {
           media_id: preferredForMedia.media_id || fallbackForMedia.media_id || null,
           like_count: preferredForMedia.like_count ?? fallbackForMedia.like_count ?? null,
           comment_count: preferredForMedia.comment_count ?? fallbackForMedia.comment_count ?? null,
+          reactions: node.reactions || eNode.reactions || null,
           
           text_body: node.text_body || eNode.text_body,
           igd_snippet: node.igd_snippet || eNode.igd_snippet,
@@ -1031,6 +1032,54 @@ export default function InboxPage() {
               });
             });
           }
+        } else if (payload.type === 'reaction') {
+          console.log('[Realtime] Reaction event received:', payload);
+          const { threadId, messageId, userId, reaction, isAdded } = payload;
+          
+          setThreads(prevThreads => 
+            prevThreads.map(thread => {
+              const isMatch = thread.id === threadId || 
+                              thread.thread_id === threadId || 
+                              thread.thread_fbid === threadId;
+              if (!isMatch) return thread;
+              
+              const edges = thread.slide_messages?.edges || [];
+              const updatedEdges = edges.map((edge: any) => {
+                if (edge.node?.id !== messageId) return edge;
+                
+                const currentReactions = edge.node.reactions || [];
+                let newReactions;
+                
+                if (isAdded) {
+                  const exists = currentReactions.some((r: any) => String(r.sender_fbid) === String(userId) && r.reaction === reaction);
+                  if (exists) return edge;
+                  newReactions = [...currentReactions, {
+                    reaction,
+                    reaction_timestamp_ms: String(Date.now()),
+                    sender_fbid: String(userId)
+                  }];
+                } else {
+                  newReactions = currentReactions.filter((r: any) => !(String(r.sender_fbid) === String(userId) && r.reaction === reaction));
+                }
+                
+                return {
+                  ...edge,
+                  node: {
+                    ...edge.node,
+                    reactions: newReactions
+                  }
+                };
+              });
+              
+              return {
+                ...thread,
+                slide_messages: {
+                  ...thread.slide_messages,
+                  edges: updatedEdges
+                }
+              };
+            })
+          );
         } else if (payload.type === 'typing') {
           const key = `${payload.threadId}_${payload.userId}`;
           console.log(`[Realtime] Typing status update: ${key} = ${payload.isTyping}`);
@@ -1186,7 +1235,7 @@ export default function InboxPage() {
       }
 
       const items = (result.items || []).filter((item: any) => {
-        if (item.item_type === 'like' || item.item_type === 'reaction') {
+        if (item.item_type === 'like' || item.item_type === 'reaction' || item.item_type === 'action_log' || item.hide_in_thread === 1) {
           return false;
         }
         return true;
@@ -2347,7 +2396,7 @@ export default function InboxPage() {
       }
 
       const items = (result.items || []).filter((item: any) => {
-        if (item.item_type === 'like' || item.item_type === 'reaction') {
+        if (item.item_type === 'like' || item.item_type === 'reaction' || item.item_type === 'action_log' || item.hide_in_thread === 1) {
           return false;
         }
         return true;

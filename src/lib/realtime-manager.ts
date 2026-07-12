@@ -239,6 +239,29 @@ export async function startRealtimeBridge(cookies: Record<string, string>, seqId
                       });
                     }
                   }
+                  
+                  if (e.path && e.path.startsWith('/direct_v2/threads') && e.path.includes('/reactions/likes/')) {
+                    const threadMatch = e.path.match(/^\/direct_v2\/threads\/(\d+)/);
+                    const threadId = threadMatch ? threadMatch[1] : null;
+                    const itemMatch = e.path.match(/\/items\/([A-Za-z0-9_-]+|\d+)/);
+                    const messageId = itemMatch ? itemMatch[1] : null;
+                    const senderMatch = e.path.match(/\/reactions\/likes\/(\d+)/);
+                    const senderId = senderMatch ? senderMatch[1] : null;
+                    
+                    if (threadId && messageId && senderId) {
+                      const isAdded = e.op === 'add' || e.op === 'replace';
+                      console.log(`[MQTT-Bridge] Extracted Reaction update from raw topic 146: Thread ${threadId}, Message ${messageId}, User ${senderId}, added: ${isAdded}`);
+                      
+                      realtimeEmitter.emit('event', {
+                        type: 'reaction',
+                        threadId,
+                        messageId,
+                        userId: String(senderId),
+                        reaction: '❤️',
+                        isAdded
+                      });
+                    }
+                  }
                 });
               }
             }
