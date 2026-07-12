@@ -2309,7 +2309,8 @@ export default function InboxPage() {
     text: string, 
     messageId: string, 
     mediaPreviewUrl?: string,
-    replyToMessage?: InstagramMessage | null
+    replyToMessage?: InstagramMessage | null,
+    clientContext?: string
   ) => {
     setThreads(prevThreads => {
       const updated = prevThreads.map(thread => {
@@ -2317,6 +2318,7 @@ export default function InboxPage() {
 
         const newMsgNode: InstagramMessage = {
           id: messageId,
+          item_id: messageId,
           sender_fbid: thread.viewer?.interop_messaging_user_fbid || "17842376945110023",
           timestamp_ms: String(Date.now()),
           content: {
@@ -2334,7 +2336,7 @@ export default function InboxPage() {
             sender_fbid: replyToMessage.sender_fbid,
             content_type: replyToMessage.content_type || 'TEXT'
           } : null,
-          client_context: messageId
+          client_context: clientContext || messageId
         };
 
         const updatedEdges = [...(thread.slide_messages?.edges || []), { node: newMsgNode }];
@@ -2509,7 +2511,7 @@ export default function InboxPage() {
         lastActivityRef.current = Date.now();
         const replyParams = currentReplyToMessage ? {
           replyToMessageId: currentReplyToMessage.id,
-          repliedToItemId: currentReplyToMessage.id,
+          repliedToItemId: currentReplyToMessage.item_id || currentReplyToMessage.id,
           repliedToClientContext: currentReplyToMessage.client_context || currentReplyToMessage.id
         } : {};
 
@@ -2559,7 +2561,7 @@ export default function InboxPage() {
         }
 
         const messageId = result.data?.ig_message_send?.message_id || `sent_${Date.now()}`;
-        appendLocalMessage(activeThreadId, newMessageText, messageId, undefined, currentReplyToMessage);
+        appendLocalMessage(activeThreadId, newMessageText, messageId, undefined, currentReplyToMessage, result.offlineThreadingId);
 
       } catch (err: any) {
         console.error('Error sending text:', err);
