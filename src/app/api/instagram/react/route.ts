@@ -36,10 +36,16 @@ export async function POST(request: NextRequest) {
       'referer': `https://www.instagram.com/direct/t/${threadId || targetThreadId}/`,
     };
 
+    // Normalize heart emoji to standard variation-free character "❤" (\u2764) for strict Instagram DB matches
+    let emojiToSend = String(emoji || '');
+    if (emojiToSend === '❤️' || emojiToSend === '❤') {
+      emojiToSend = '❤';
+    }
+
     // Construct variables object for IGDirectReactionSendMutation
     const variablesObj = {
       input: {
-        emoji: String(emoji),
+        emoji: emojiToSend,
         item_id: String(itemId || ''),
         message_id: messageId,
         reaction_status: String(reactionStatus || 'created'), // 'created' to add, 'deleted' to remove
