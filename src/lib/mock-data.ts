@@ -5,6 +5,7 @@ export interface InstagramUser {
   username: string;
   profile_pic_url: string;
   is_verified?: boolean;
+  pk?: string;
 }
 
 export interface InstagramMessage {

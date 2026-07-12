@@ -417,9 +417,13 @@ export default function InboxPage() {
   const [isForwardSearching, setIsForwardSearching] = useState(false);
   const [suggestedContacts, setSuggestedContacts] = useState<any[]>([]);
   const [isFetchingSuggested, setIsFetchingSuggested] = useState(false);
+  const [isNewMessageModalOpen, setIsNewMessageModalOpen] = useState(false);
+  const [newMessageSearchQuery, setNewMessageSearchQuery] = useState('');
+  const [newMessageSearchResults, setNewMessageSearchResults] = useState<any[]>([]);
+  const [isNewMessageSearching, setIsNewMessageSearching] = useState(false);
 
   useEffect(() => {
-    if (isForwardModalOpen) {
+    if (isForwardModalOpen || isNewMessageModalOpen) {
       const fetchSuggested = async () => {
         setIsFetchingSuggested(true);
         try {
@@ -446,7 +450,46 @@ export default function InboxPage() {
       };
       fetchSuggested();
     }
-  }, [isForwardModalOpen]);
+  }, [isForwardModalOpen, isNewMessageModalOpen]);
+
+  // Debounced Instagram new message search
+  useEffect(() => {
+    if (!newMessageSearchQuery.trim()) {
+      setNewMessageSearchResults([]);
+      setIsNewMessageSearching(false);
+      return;
+    }
+
+    setIsNewMessageSearching(true);
+
+    const delayDebounceFn = setTimeout(async () => {
+      try {
+        const res = await fetch('/api/instagram/search_forwarding', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            searchText: newMessageSearchQuery,
+            cookies: cookiesRef.current,
+            headers: headersRef.current,
+            data: postDataRef.current
+          })
+        });
+
+        const result = await res.json();
+        if (res.ok && result.success) {
+          setNewMessageSearchResults(result.users || []);
+        }
+      } catch (err) {
+        console.error('Error fetching new message search results:', err);
+      } finally {
+        setIsNewMessageSearching(false);
+      }
+    }, 400);
+
+    return () => clearTimeout(delayDebounceFn);
+  }, [newMessageSearchQuery]);
   const [isPollingEnabled, setIsPollingEnabled] = useState<boolean>(() => {
     if (typeof window === 'undefined') return true;
     try {
@@ -2547,13 +2590,17 @@ export default function InboxPage() {
           repliedToClientContext: currentReplyToMessage.client_context || currentReplyToMessage.id
         } : {};
 
+        const isTemporary = activeThreadId.startsWith('temp_');
+        const recipientId = isTemporary ? activeThreadId.replace('temp_', '') : undefined;
+
         const response = await fetch('/api/instagram/send', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            threadId: activeThreadId,
+            threadId: isTemporary ? undefined : activeThreadId,
+            recipientId,
             text: newMessageText,
             cookies: cookiesRef.current || cookies,
             headers: headersRef.current || headers,
@@ -2594,6 +2641,23 @@ export default function InboxPage() {
 
         const messageId = result.data?.ig_message_send?.message_id || `sent_${Date.now()}`;
         appendLocalMessage(activeThreadId, newMessageText, messageId, undefined, currentReplyToMessage, result.offlineThreadingId);
+
+        if (isTemporary && recipientId) {
+          // Immediately fetch inbox to get the real thread ID created by Instagram
+          setTimeout(async () => {
+            await fetchLiveInbox();
+            // Now check the updated threadsRef.current
+            const newThread = threadsRef.current.find(t => 
+              !t.is_group && t.users?.some(u => String(u.pk) === String(recipientId))
+            );
+            if (newThread) {
+              console.log(`[NewMessage] Found newly created thread ${newThread.id} for recipient ${recipientId}. Switching...`);
+              setActiveThreadId(newThread.id);
+              // Remove the temp thread from list
+              setThreads(prev => prev.filter(t => t.id !== activeThreadId));
+            }
+          }, 2000);
+        }
 
       } catch (err: any) {
         console.error('Error sending text:', err);
@@ -4664,6 +4728,18 @@ export default function InboxPage() {
             
             <button 
               className="icon-btn" 
+              title="Yeni Mesaj Başlat" 
+              onClick={() => setIsNewMessageModalOpen(true)}
+            >
+              {/* Square-edit / New Message Icon */}
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4z"></path>
+              </svg>
+            </button>
+
+            <button 
+              className="icon-btn" 
               title="Ayarlar ve Çerezler" 
               onClick={() => setIsSettingsOpen(true)}
             >
@@ -6674,6 +6750,301 @@ export default function InboxPage() {
                 </>
               )}
             </footer>
+
+          </div>
+        </div>
+      )}
+
+      {/* NEW MESSAGE MODAL */}
+      {isNewMessageModalOpen && (
+        <div className="modal-backdrop" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10100 }} onClick={() => setIsNewMessageModalOpen(false)}>
+          <div style={{
+            background: 'rgba(30, 30, 30, 0.96)',
+            backdropFilter: 'blur(20px)',
+            border: '1px solid rgba(255, 255, 255, 0.1)',
+            borderRadius: '12px',
+            width: '440px',
+            height: '560px',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+            boxShadow: '0 20px 40px rgba(0,0,0,0.6)'
+          }} onClick={(e) => e.stopPropagation()}>
+            
+            {/* Header */}
+            <header style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '16px 20px',
+              borderBottom: '1px solid rgba(255, 255, 255, 0.08)'
+            }}>
+              <span style={{ fontSize: '16px', fontWeight: '700', color: '#fff' }}>Yeni Mesaj</span>
+              <button 
+                onClick={() => setIsNewMessageModalOpen(false)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'rgba(255,255,255,0.6)',
+                  cursor: 'pointer',
+                  padding: '4px'
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+              </button>
+            </header>
+
+            {/* Search Input */}
+            <div style={{ padding: '12px 20px', borderBottom: '1px solid rgba(255, 255, 255, 0.08)' }}>
+              <input 
+                type="text"
+                value={newMessageSearchQuery}
+                onChange={(e) => setNewMessageSearchQuery(e.target.value)}
+                placeholder="Kişi Ara..."
+                style={{
+                  width: '100%',
+                  background: 'rgba(255, 255, 255, 0.06)',
+                  border: 'none',
+                  borderRadius: '8px',
+                  padding: '10px 14px',
+                  color: '#fff',
+                  fontSize: '13px',
+                  outline: 'none'
+                }}
+              />
+            </div>
+
+            {/* Results Area */}
+            <div style={{ flex: 1, overflowY: 'auto', padding: '10px 0' }} className="custom-scrollbar">
+              {(() => {
+                if (isNewMessageSearching) {
+                  return (
+                    <div style={{ padding: '40px 20px', textAlign: 'center', color: 'rgba(255, 255, 255, 0.4)' }}>
+                      <svg className="refresh-spinning" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ margin: '0 auto' }}>
+                        <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
+                      </svg>
+                      <div style={{ marginTop: '8px', fontSize: '13px' }}>Aranıyor...</div>
+                    </div>
+                  );
+                }
+
+                // If searching, render searched users
+                if (newMessageSearchQuery.trim()) {
+                  if (newMessageSearchResults.length === 0) {
+                    return (
+                      <div style={{ padding: '40px 20px', textAlign: 'center', color: 'rgba(255, 255, 255, 0.4)', fontSize: '13px' }}>
+                        Sonuç bulunamadı.
+                      </div>
+                    );
+                  }
+
+                  return newMessageSearchResults.map(user => {
+                    const id = user.pk || user.share_sheet_item_id;
+                    const displayName = user.full_name || user.username;
+                    const avatar = user.profile_pic_url;
+
+                    return (
+                      <div 
+                        key={id}
+                        onClick={() => {
+                          const existingThread = threads.find(t => 
+                            !t.is_group && t.users?.some(u => String(u.pk || u.id) === String(user.pk))
+                          );
+                          if (existingThread) {
+                            setActiveThreadId(existingThread.id);
+                          } else {
+                            // Create temporary optimistic thread
+                            const tempThreadId = `temp_${user.pk}`;
+                            const tempThread: InstagramThread = {
+                              id: tempThreadId,
+                              thread_fbid: tempThreadId,
+                              thread_id: tempThreadId,
+                              thread_key: tempThreadId,
+                              thread_title: displayName,
+                              is_group: false,
+                              is_pin: false,
+                              is_muted: false,
+                              marked_as_unread: false,
+                              last_activity_timestamp_ms: String(Date.now()),
+                              folder: 'PRIMARY',
+                              users: [{
+                                id: String(user.pk),
+                                interop_messaging_user_fbid: String(user.pk),
+                                pk: String(user.pk),
+                                username: user.username,
+                                full_name: user.full_name,
+                                profile_pic_url: user.profile_pic_url || '',
+                                is_verified: user.is_verified || false
+                              }],
+                              viewer: {
+                                id: cookiesRef.current['ds_user_id'] || '',
+                                interop_messaging_user_fbid: cookiesRef.current['ds_user_id'] || '',
+                                profile_pic_url: '',
+                                viewer_id: cookiesRef.current['ds_user_id'] || ''
+                              },
+                              slide_messages: { edges: [] }
+                            };
+                            setThreads(prev => [tempThread, ...prev]);
+                            setActiveThreadId(tempThreadId);
+                          }
+                          setIsNewMessageModalOpen(false);
+                          setNewMessageSearchQuery('');
+                        }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '12px',
+                          padding: '10px 20px',
+                          cursor: 'pointer',
+                          transition: 'background 0.2s'
+                        }}
+                        className="new-message-item"
+                        onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)'}
+                        onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                      >
+                        <img 
+                          src={avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=80&h=80&fit=crop&q=80"}
+                          alt={displayName}
+                          style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' }}
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).src = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=80&h=80&fit=crop&q=80";
+                          }}
+                        />
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <span style={{ fontSize: '13px', fontWeight: '600', color: '#fff' }}>{displayName}</span>
+                            {user.is_verified && (
+                              <span style={{ color: '#0095f6', display: 'flex', alignItems: 'center' }} title="Onaylı Hesap">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                                  <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"></path>
+                                </svg>
+                              </span>
+                            )}
+                          </div>
+                          <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)' }}>@{user.username}</span>
+                        </div>
+                      </div>
+                    );
+                  });
+                }
+
+                // If not searching, render Null State suggested contacts list
+                return (
+                  <>
+                    {isFetchingSuggested ? (
+                      <div style={{ padding: '40px 20px', textAlign: 'center', color: 'rgba(255, 255, 255, 0.4)' }}>
+                        <svg className="refresh-spinning" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ margin: '0 auto' }}>
+                          <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
+                        </svg>
+                        <div style={{ marginTop: '8px', fontSize: '12px' }}>Öneriler yükleniyor...</div>
+                      </div>
+                    ) : suggestedContacts.length > 0 ? (
+                      <>
+                        <div style={{ padding: '6px 20px 8px 20px', fontSize: '11px', fontWeight: '700', color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                          Önerilen Kişiler
+                        </div>
+                        {suggestedContacts.map(user => {
+                          const id = user.pk || user.share_sheet_item_id;
+                          const displayName = user.full_name || user.username;
+                          const avatar = user.profile_pic_url;
+
+                          return (
+                            <div 
+                              key={id}
+                              onClick={() => {
+                                const existingThread = threads.find(t => 
+                                  !t.is_group && t.users?.some(u => String(u.pk || u.id) === String(user.pk))
+                                );
+                                if (existingThread) {
+                                  setActiveThreadId(existingThread.id);
+                                } else {
+                                  // Create temporary optimistic thread
+                                  const tempThreadId = `temp_${user.pk}`;
+                                  const tempThread: InstagramThread = {
+                                    id: tempThreadId,
+                                    thread_fbid: tempThreadId,
+                                    thread_id: tempThreadId,
+                                    thread_key: tempThreadId,
+                                    thread_title: displayName,
+                                    is_group: false,
+                                    is_pin: false,
+                                    is_muted: false,
+                                    marked_as_unread: false,
+                                    last_activity_timestamp_ms: String(Date.now()),
+                                    folder: 'PRIMARY',
+                                    users: [{
+                                      id: String(user.pk),
+                                      interop_messaging_user_fbid: String(user.pk),
+                                      pk: String(user.pk),
+                                      username: user.username,
+                                      full_name: user.full_name,
+                                      profile_pic_url: user.profile_pic_url || '',
+                                      is_verified: user.is_verified || false
+                                    }],
+                                    viewer: {
+                                      id: cookiesRef.current['ds_user_id'] || '',
+                                      interop_messaging_user_fbid: cookiesRef.current['ds_user_id'] || '',
+                                      profile_pic_url: '',
+                                      viewer_id: cookiesRef.current['ds_user_id'] || ''
+                                    },
+                                    slide_messages: { edges: [] }
+                                  };
+                                  setThreads(prev => [tempThread, ...prev]);
+                                  setActiveThreadId(tempThreadId);
+                                }
+                                setIsNewMessageModalOpen(false);
+                                setNewMessageSearchQuery('');
+                              }}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '12px',
+                                padding: '10px 20px',
+                                cursor: 'pointer',
+                                transition: 'background 0.2s'
+                              }}
+                              className="new-message-item"
+                              onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)'}
+                              onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                            >
+                              <img 
+                                src={avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=80&h=80&fit=crop&q=80"}
+                                child-src=""
+                                alt={displayName}
+                                style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' }}
+                                onError={(e) => {
+                                  (e.target as HTMLImageElement).src = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=80&h=80&fit=crop&q=80";
+                                }}
+                              />
+                              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                  <span style={{ fontSize: '13px', fontWeight: '600', color: '#fff' }}>{displayName}</span>
+                                  {user.is_verified && (
+                                    <span style={{ color: '#0095f6', display: 'flex', alignItems: 'center' }} title="Onaylı Hesap">
+                                      <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                                        <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"></path>
+                                      </svg>
+                                    </span>
+                                  )}
+                                </div>
+                                <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)' }}>@{user.username}</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </>
+                    ) : (
+                      <div style={{ padding: '40px 20px', textAlign: 'center', color: 'rgba(255, 255, 255, 0.4)', fontSize: '13px' }}>
+                        Önerilen kişi bulunamadı.
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
 
           </div>
         </div>
