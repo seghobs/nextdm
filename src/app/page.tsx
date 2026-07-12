@@ -2031,6 +2031,9 @@ export default function InboxPage() {
         });
       });
       setActiveThreadId(currentId => {
+        if (currentId && currentId.startsWith('temp_')) {
+          return currentId;
+        }
         const exists = liveThreads.some(t => t.id === currentId);
         if (currentId && exists) return currentId;
         return liveThreads[0]?.id || null;
