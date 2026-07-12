@@ -1497,7 +1497,8 @@ export default function InboxPage() {
           like_count: likeCount,
           comment_count: commentCount,
           reactions: mappedReactions,
-          reply_to_message: repliedMessage
+          reply_to_message: repliedMessage,
+          client_context: item.client_context || null
         };
       });
 
@@ -1683,7 +1684,8 @@ export default function InboxPage() {
       like_count: likeCount,
       comment_count: commentCount,
       reactions: node.reactions || null,
-      reply_to_message: repliedMessage
+      reply_to_message: repliedMessage,
+      client_context: node.client_context || node.offline_threading_id || null
     };
   };
 
@@ -2322,7 +2324,8 @@ export default function InboxPage() {
             text_body: replyToMessage.text_body || replyToMessage.content?.text_body || 'Mesaj',
             sender_fbid: replyToMessage.sender_fbid,
             content_type: replyToMessage.content_type || 'TEXT'
-          } : null
+          } : null,
+          client_context: messageId
         };
 
         const updatedEdges = [...(thread.slide_messages?.edges || []), { node: newMsgNode }];
@@ -2498,7 +2501,7 @@ export default function InboxPage() {
         const replyParams = currentReplyToMessage ? {
           replyToMessageId: currentReplyToMessage.id,
           repliedToItemId: currentReplyToMessage.id,
-          repliedToClientContext: currentReplyToMessage.id
+          repliedToClientContext: currentReplyToMessage.client_context || currentReplyToMessage.id
         } : {};
 
         const response = await fetch('/api/instagram/send', {
@@ -2823,7 +2826,8 @@ export default function InboxPage() {
             like_count: likeCount,
             comment_count: commentCount,
             reactions: mappedReactions,
-            reply_to_message: repliedMessage
+            reply_to_message: repliedMessage,
+            client_context: item.client_context || null
           };
         });
 

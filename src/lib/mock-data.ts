@@ -38,6 +38,7 @@ export interface InstagramMessage {
     sender_fbid?: string;
     content_type?: string;
   } | null;
+  client_context?: string | null;
 }
 
 export interface InstagramThread {
