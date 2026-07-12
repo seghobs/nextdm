@@ -383,7 +383,7 @@ export default function InboxPage() {
   });
   const [commentsSortOrder, setCommentsSortOrder] = useState<string>('recent');
   const lastTouchTimeRef = useRef<Record<string, number>>({});
-  const [activeFolder, setActiveFolder] = useState<'PRIMARY' | 'GENERAL'>('PRIMARY');
+  const [activeFolder, setActiveFolder] = useState<'PRIMARY' | 'GENERAL' | 'PENDING'>('PRIMARY');
   const contextMenuJustOpenedRef = useRef<boolean>(false);
 
   const [isFetching, setIsFetching] = useState(false);
@@ -1625,7 +1625,7 @@ export default function InboxPage() {
     currentHeaders = headers, 
     currentData = postData,
     background = false,
-    folderOverride?: 'PRIMARY' | 'GENERAL'
+    folderOverride?: 'PRIMARY' | 'GENERAL' | 'PENDING'
   ) => {
     // If not logged in, skip inbox sync
     if (!isLoggedIn) {
@@ -3738,8 +3738,10 @@ export default function InboxPage() {
       const folderVal = thread.folder || 'PRIMARY';
       if (activeFolder === 'PRIMARY') {
         return folderVal === 'PRIMARY' || folderVal === 'INBOX';
-      } else {
+      } else if (activeFolder === 'GENERAL') {
         return folderVal === 'GENERAL';
+      } else {
+        return folderVal === 'PENDING';
       }
     });
 
@@ -4169,15 +4171,18 @@ export default function InboxPage() {
         }}>
           {[
             { id: 'PRIMARY', label: 'Birincil' },
-            { id: 'GENERAL', label: 'Genel' }
+            { id: 'GENERAL', label: 'Genel' },
+            { id: 'PENDING', label: 'İstekler' }
           ].map(tab => {
             const isActive = activeFolder === tab.id;
             const unreadCount = threads.filter(t => {
               const folderVal = t.folder || 'PRIMARY';
               if (tab.id === 'PRIMARY') {
                 return (folderVal === 'PRIMARY' || folderVal === 'INBOX');
-              } else {
+              } else if (tab.id === 'GENERAL') {
                 return folderVal === 'GENERAL';
+              } else {
+                return folderVal === 'PENDING';
               }
             }).filter(t => t.marked_as_unread).length;
 
@@ -4185,7 +4190,7 @@ export default function InboxPage() {
               <button
                 key={tab.id}
                 onClick={() => {
-                  const targetFolder = tab.id as 'PRIMARY' | 'GENERAL';
+                  const targetFolder = tab.id as 'PRIMARY' | 'GENERAL' | 'PENDING';
                   setActiveFolder(targetFolder);
                   
                   // Set active thread to the first local thread in this folder if we have one
@@ -4193,8 +4198,10 @@ export default function InboxPage() {
                     const folderVal = t.folder || 'PRIMARY';
                     if (targetFolder === 'PRIMARY') {
                       return folderVal === 'PRIMARY' || folderVal === 'INBOX';
-                    } else {
+                    } else if (targetFolder === 'GENERAL') {
                       return folderVal === 'GENERAL';
+                    } else {
+                      return folderVal === 'PENDING';
                     }
                   });
                   if (localThreadsInFolder.length > 0) {
@@ -5105,51 +5112,111 @@ export default function InboxPage() {
             </div>
 
             {/* Input Message Area */}
-            <form className="chat-input-bar" onSubmit={handleSendMessage} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-
-              <div className="chat-input-container">
-                <input 
-                  ref={chatInputRef}
-                  type="text" 
-                  className="chat-input" 
-                  placeholder="Mesaj yaz..." 
-                  value={typedMessage}
-                  onChange={(e) => {
-                    setTypedMessage(e.target.value);
-                    handleUserTyping();
-                    recordInteraction();
-                  }}
-                />
-                
-                <div className="chat-input-buttons">
-                  {typedMessage.trim() ? (
-                    <button type="submit" className="send-btn">Gönder</button>
-                  ) : (
-                    <>
-                      <button type="button" className="icon-btn" title="Resim Ekle">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-                          <circle cx="8.5" cy="8.5" r="1.5"></circle>
-                          <polyline points="21 15 16 10 5 21"></polyline>
-                        </svg>
-                      </button>
-                      <button 
-                        type="button" 
-                        className="icon-btn" 
-                        title="Beğeni" 
-                        onClick={() => {
-                          setTypedMessage('❤️');
-                        }}
-                      >
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path>
-                        </svg>
-                      </button>
-                    </>
-                  )}
+            {activeThread && activeThread.folder === 'PENDING' ? (
+              <div style={{
+                background: 'rgba(20, 20, 20, 0.95)',
+                borderTop: '1px solid var(--border-color)',
+                padding: '16px 20px',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: '12px',
+                textAlign: 'center'
+              }}>
+                <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.5)', lineHeight: '1.4' }}>
+                  Bu kullanıcı size bir mesaj isteği gönderdi. Kabul edene kadar size yeni mesaj gönderemezler ve siz de yanıtlayamazsınız.
+                </div>
+                <div style={{ display: 'flex', gap: '12px', width: '100%', maxWidth: '320px' }}>
+                  <button 
+                    onClick={() => handleDeleteThread(activeThread.id)}
+                    style={{
+                      flex: 1,
+                      padding: '10px 0',
+                      background: 'rgba(255, 255, 255, 0.08)',
+                      border: '1px solid rgba(255, 255, 255, 0.15)',
+                      borderRadius: '8px',
+                      color: '#ef4444',
+                      fontSize: '13px',
+                      fontWeight: '600',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s'
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(239, 68, 68, 0.12)'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)'}
+                  >
+                    Sil / Yoksay
+                  </button>
+                  <button 
+                    onClick={async () => {
+                      await handleMoveThread(activeThread.id, 'PRIMARY');
+                      // Locally update the folder of the active thread to PRIMARY so it unlocks immediately
+                      setThreads(prev => prev.map(t => t.id === activeThread.id ? { ...t, folder: 'PRIMARY' } : t));
+                    }}
+                    style={{
+                      flex: 1,
+                      padding: '10px 0',
+                      background: '#0095f6',
+                      border: 'none',
+                      borderRadius: '8px',
+                      color: '#fff',
+                      fontSize: '13px',
+                      fontWeight: '600',
+                      cursor: 'pointer',
+                      transition: 'background 0.2s'
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = '#1877f2'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = '#0095f6'}
+                  >
+                    Kabul Et
+                  </button>
                 </div>
               </div>
-            </form>
+            ) : (
+              <form className="chat-input-bar" onSubmit={handleSendMessage} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <div className="chat-input-container">
+                  <input 
+                    ref={chatInputRef}
+                    type="text" 
+                    className="chat-input" 
+                    placeholder="Mesaj yaz..." 
+                    value={typedMessage}
+                    onChange={(e) => {
+                      setTypedMessage(e.target.value);
+                      handleUserTyping();
+                      recordInteraction();
+                    }}
+                  />
+                  
+                  <div className="chat-input-buttons">
+                    {typedMessage.trim() ? (
+                      <button type="submit" className="send-btn">Gönder</button>
+                    ) : (
+                      <>
+                        <button type="button" className="icon-btn" title="Resim Ekle">
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                            <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                            <polyline points="21 15 16 10 5 21"></polyline>
+                          </svg>
+                        </button>
+                        <button 
+                          type="button" 
+                          className="icon-btn" 
+                          title="Beğeni" 
+                          onClick={() => {
+                            setTypedMessage('❤️');
+                          }}
+                        >
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path>
+                          </svg>
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </form>
+            )}
           </>
         ) : (
           <div className="empty-chat">
