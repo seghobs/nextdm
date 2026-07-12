@@ -32,6 +32,10 @@ export async function POST(request: NextRequest) {
       'referer': 'https://www.instagram.com/direct/inbox/',
     };
 
+    // Crucial: remove urlencoded content-type so fetch can set the correct multipart/form-data boundary
+    delete headersToSend['content-type'];
+    delete headersToSend['Content-Type'];
+
     // Build the query parameters for Instagram mercury upload.php
     // Facebook expects all tokens (fb_dtsg, lsd, spin parameters) in the URL query string
     const queryParams = new URLSearchParams();
