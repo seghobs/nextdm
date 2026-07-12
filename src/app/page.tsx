@@ -1366,6 +1366,15 @@ export default function InboxPage() {
       return;
     }
 
+    if (threadId.startsWith('temp_')) {
+      // Temporary thread has no remote history
+      setThreadCursors(prev => ({
+        ...prev,
+        [threadId]: { oldestCursor: null, hasOlder: false, isLoadingMore: false }
+      }));
+      return;
+    }
+
     // Set loading cursor state
     setThreadCursors(prev => ({
       ...prev,
@@ -2706,6 +2715,10 @@ export default function InboxPage() {
 
   // Load older messages for a specific thread (history pagination)
   const loadMoreMessages = async (thread: InstagramThread) => {
+    if (thread.id.startsWith('temp_')) {
+      return;
+    }
+    
     const tState = threadCursors[thread.id] || { oldestCursor: null, hasOlder: true, isLoadingMore: false };
     
     if (threadCursors[thread.id]) {
