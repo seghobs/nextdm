@@ -1045,7 +1045,8 @@ export default function InboxPage() {
               
               const edges = thread.slide_messages?.edges || [];
               const updatedEdges = edges.map((edge: any) => {
-                if (edge.node?.id !== messageId) return edge;
+                const isMsgMatch = edge.node?.id === messageId || edge.node?.item_id === messageId;
+                if (!isMsgMatch) return edge;
                 
                 const currentReactions = edge.node.reactions || [];
                 let newReactions;
@@ -1392,6 +1393,7 @@ export default function InboxPage() {
 
         return {
           id: item.message_id || item.item_id,
+          item_id: item.item_id || undefined,
           sender_fbid: item.user_id,
           timestamp_ms: Math.floor(Number(item.timestamp) / 1000).toString(),
           content: {
@@ -2555,6 +2557,7 @@ export default function InboxPage() {
 
           return {
             id: item.message_id || item.item_id,
+            item_id: item.item_id || undefined,
             sender_fbid: item.user_id,
             timestamp_ms: Math.floor(Number(item.timestamp) / 1000).toString(),
             content: {

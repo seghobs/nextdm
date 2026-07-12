@@ -9,6 +9,7 @@ export interface InstagramUser {
 
 export interface InstagramMessage {
   id: string;
+  item_id?: string;
   sender_fbid: string;
   timestamp_ms: string;
   content: {

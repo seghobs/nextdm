@@ -157,6 +157,17 @@ export async function startRealtimeBridge(cookies: Record<string, string>, seqId
         }
       }
 
+      // Filter out system placeholder/reaction/action_log messages
+      if (
+        messageData.item_type === 'action_log' || 
+        messageData.item_type === 'like' || 
+        messageData.item_type === 'reaction' || 
+        messageData.hide_in_thread === 1
+      ) {
+        console.log('[MQTT-Bridge] Ignoring system action_log/like message event:', messageData.item_id);
+        return;
+      }
+
       const threadId = messageData.thread_id;
       const itemId = messageData.item_id;
       const senderId = messageData.user_id;
