@@ -3460,6 +3460,49 @@ export default function InboxPage() {
     }
   };
 
+  const handleDeleteThread = async (threadId: string) => {
+    // Find the thread to get its thread_fbid
+    const thread = threads.find(t => t.id === threadId);
+    if (!thread) return;
+
+    const threadFbid = thread.thread_fbid || thread.id;
+
+    if (!confirm('Bu sohbeti silmek/gizlemek istediğinizden emin misiniz?')) {
+      return;
+    }
+
+    // Instantly remove from local threads state
+    setThreads(prevThreads => prevThreads.filter(t => t.id !== threadId));
+
+    if (activeThreadId === threadId) {
+      setActiveThreadId(null);
+    }
+
+    try {
+      const res = await fetch('/api/instagram/delete_thread', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          threadFbid,
+          cookies: cookiesRef.current,
+          headers: headersRef.current,
+          data: postDataRef.current
+        })
+      });
+
+      const result = await res.json();
+      if (!res.ok || !result.success) {
+        console.error('Failed to delete thread on Instagram:', result.error || 'Unknown error');
+      } else {
+        console.log('Successfully hid/deleted thread on Instagram:', threadFbid);
+      }
+    } catch (err) {
+      console.error('Network error deleting thread:', err);
+    }
+  };
+
   const handleMsgContextMenu = (e: React.MouseEvent, msg: InstagramMessage) => {
     if (msg.content_type !== 'TEXT') return;
 
@@ -6098,6 +6141,39 @@ export default function InboxPage() {
               <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
             </svg>
             Genel (General) Klasöre Taşı
+          </button>
+
+          <button 
+            onClick={() => {
+              handleDeleteThread(threadContextMenu.threadId);
+              setThreadContextMenu(prev => ({ ...prev, visible: false }));
+            }}
+            style={{
+              width: '100%',
+              textAlign: 'left',
+              padding: '10px 12px',
+              background: 'none',
+              border: 'none',
+              color: '#ef4444',
+              fontSize: '13px',
+              cursor: 'pointer',
+              borderRadius: '6px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              transition: 'background 0.2s',
+              marginTop: '2px'
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(239, 68, 68, 0.12)'}
+            onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="3 6 5 6 21 6"></polyline>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+              <line x1="10" y1="11" x2="10" y2="17"></line>
+              <line x1="14" y1="11" x2="14" y2="17"></line>
+            </svg>
+            Sohbeti Sil / Gizle
           </button>
         </div>
       )}
