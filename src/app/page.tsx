@@ -2346,6 +2346,19 @@ export default function InboxPage() {
     });
   };
 
+  const getReplyHeaderLabel = (msg: InstagramMessage, sent: boolean, senderUser: any) => {
+    if (!msg.reply_to_message) return null;
+    const activeThread = threads.find(t => t.id === activeThreadId);
+    const viewerFbid = activeThread?.viewer?.interop_messaging_user_fbid || "17842376945110023";
+    const isTargetOwnMessage = msg.reply_to_message.sender_fbid === viewerFbid;
+
+    if (sent) {
+      return isTargetOwnMessage ? "Kendine yanıt verdin" : `${activeThread?.thread_title || 'Alıcıya'} yanıt verdin`;
+    } else {
+      return isTargetOwnMessage ? "Sana yanıt verdi" : `${senderUser?.username || 'Bilinmeyen'} kendine yanıt verdi`;
+    }
+  };
+
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [selectedImageFile, setSelectedImageFile] = useState<File | null>(null);
   const [selectedImagePreviewUrl, setSelectedImagePreviewUrl] = useState<string | null>(null);
@@ -5000,6 +5013,19 @@ export default function InboxPage() {
                         </span>
                       )}
 
+                      {msg.reply_to_message && (
+                        <span style={{ 
+                          fontSize: '11px', 
+                          color: 'rgba(255,255,255,0.4)', 
+                          marginLeft: sent ? 'auto' : '36px', 
+                          marginRight: sent ? '4px' : 'auto',
+                          marginBottom: '2px',
+                          display: 'block'
+                        }}>
+                          {getReplyHeaderLabel(msg, sent, senderUser)}
+                        </span>
+                      )}
+
                       <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'flex-end', justifyContent: sent ? 'flex-end' : 'flex-start', gap: '8px' }}>
                         {!sent && (
                           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: '2px', flexShrink: 0 }}>
@@ -5020,8 +5046,54 @@ export default function InboxPage() {
                           </div>
                         )}
 
-                        <div 
-                          onContextMenu={(e) => {
+                        <div className={`message-bubble-row ${sent ? 'sent' : 'received'}`}>
+                          
+                          {/* Hover actions menu next to bubble */}
+                          <div className="quick-actions">
+                            <button 
+                              type="button" 
+                              className="quick-action-btn" 
+                              title="Beğen"
+                              onClick={(e) => handleMessageDoubleClick(e, msg)}
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path>
+                              </svg>
+                            </button>
+                            <button 
+                              type="button" 
+                              className="quick-action-btn" 
+                              title="Yanıtla"
+                              onClick={() => setReplyToMessage(msg)}
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                <polyline points="9 17 4 12 9 7"></polyline>
+                                <path d="M20 18v-2a4 4 0 0 0-4-4H4"></path>
+                              </svg>
+                            </button>
+                            <button 
+                              type="button" 
+                              className="quick-action-btn" 
+                              title="Daha fazla"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                if (msg.content_type === 'TEXT') {
+                                  handleMsgContextMenu(e, msg);
+                                } else {
+                                  handleContextMenu(e, msg, 'right-click');
+                                }
+                              }}
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                <circle cx="12" cy="12" r="1.5"></circle>
+                                <circle cx="12" cy="5" r="1.5"></circle>
+                                <circle cx="12" cy="19" r="1.5"></circle>
+                              </svg>
+                            </button>
+                          </div>
+
+                          <div 
+                            onContextMenu={(e) => {
                             if (msg.content_type === 'TEXT') {
                               handleMsgContextMenu(e, msg);
                             } else {
@@ -5338,6 +5410,7 @@ export default function InboxPage() {
                               )}
                             </div>
                           )}
+                          </div>
                         </div>
                       </div>
 
