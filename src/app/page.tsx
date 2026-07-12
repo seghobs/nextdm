@@ -3833,6 +3833,53 @@ export default function InboxPage() {
     }
   };
 
+  const handleMuteThread = async (threadId: string, muteSeconds: number) => {
+    // Find the thread to get its thread_fbid
+    const thread = threads.find(t => t.id === threadId);
+    if (!thread) return;
+
+    const threadFbid = thread.thread_fbid || thread.id;
+    const shouldMute = muteSeconds !== 0;
+
+    // Instantly update local thread's is_muted state in UI
+    setThreads(prevThreads => 
+      prevThreads.map(t => t.id === threadId ? { ...t, is_muted: shouldMute } : t)
+    );
+
+    try {
+      const res = await fetch('/api/instagram/mute_thread', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          threadFbid,
+          muteSeconds,
+          cookies: cookiesRef.current,
+          headers: headersRef.current,
+          data: postDataRef.current
+        })
+      });
+
+      const result = await res.json();
+      if (!res.ok || !result.success) {
+        console.error('Failed to mute/unmute thread on Instagram:', result.error || 'Unknown error');
+        // Rollback state on error
+        setThreads(prevThreads => 
+          prevThreads.map(t => t.id === threadId ? { ...t, is_muted: !shouldMute } : t)
+        );
+      } else {
+        console.log(`Successfully ${shouldMute ? 'muted' : 'unmuted'} thread on Instagram:`, threadFbid);
+      }
+    } catch (err) {
+      console.error('Network error muting thread:', err);
+      // Rollback state on error
+      setThreads(prevThreads => 
+        prevThreads.map(t => t.id === threadId ? { ...t, is_muted: !shouldMute } : t)
+      );
+    }
+  };
+
   const handleForwardMessage = async () => {
     const selectedIds = Object.keys(forwardSelectedRecipients);
     if (selectedIds.length === 0 || !forwardMessageText.trim()) return;
@@ -4786,6 +4833,15 @@ export default function InboxPage() {
                           <span title="Sabitlenmiş" style={{ marginLeft: '6px', display: 'inline-flex', alignItems: 'center', color: '#a8a8a8' }}>
                             <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style={{ transform: 'rotate(45deg)' }}>
                               <path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"></path>
+                            </svg>
+                          </span>
+                        )}
+                        {thread.is_muted && (
+                          <span title="Sessize Alınmış" style={{ marginLeft: '6px', display: 'inline-flex', alignItems: 'center', color: 'rgba(255,255,255,0.4)' }}>
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M11 5L6 9H2v6h4l5 4V5z"></path>
+                              <line x1="23" y1="9" x2="17" y2="15"></line>
+                              <line x1="17" y1="9" x2="23" y2="15"></line>
                             </svg>
                           </span>
                         )}
@@ -7385,6 +7441,53 @@ export default function InboxPage() {
                   {isUnread ? null : <circle cx="12" cy="12" r="3" fill="#60a5fa"></circle>}
                 </svg>
                 {isUnread ? 'Okundu Olarak İşaretle' : 'Okunmadı Olarak İşaretle'}
+              </button>
+            );
+          })()}
+
+          {(() => {
+            const thread = threads.find(t => t.id === threadContextMenu.threadId);
+            const isMuted = thread?.is_muted || false;
+            return (
+              <button 
+                onClick={() => {
+                  handleMuteThread(threadContextMenu.threadId, isMuted ? 0 : -1);
+                  setThreadContextMenu(prev => ({ ...prev, visible: false }));
+                }}
+                style={{
+                  width: '100%',
+                  textAlign: 'left',
+                  padding: '10px 12px',
+                  background: 'none',
+                  border: 'none',
+                  color: '#fff',
+                  fontSize: '13px',
+                  cursor: 'pointer',
+                  borderRadius: '6px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  transition: 'background 0.2s',
+                  marginTop: '2px'
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.08)'}
+                onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#a8a8a8" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  {isMuted ? (
+                    <>
+                      <path d="M11 5L6 9H2v6h4l5 4V5z"></path>
+                      <line x1="23" y1="9" x2="17" y2="15"></line>
+                      <line x1="17" y1="9" x2="23" y2="15"></line>
+                    </>
+                  ) : (
+                    <>
+                      <path d="M11 5L6 9H2v6h4l5 4V5z"></path>
+                      <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                    </>
+                  )}
+                </svg>
+                {isMuted ? 'Sohbetin Sesini Aç' : 'Sohbeti Sessize Al'}
               </button>
             );
           })()}
