@@ -794,6 +794,7 @@ export default function InboxPage() {
   const activeThreadIdRef = useRef<string | null>(null);
   const threadsRef = useRef(threads);
   const autoSeenTimersRef = useRef<Record<string, NodeJS.Timeout>>({});
+  const lastFocusTimeRef = useRef<number>(0);
 
   // Keep refs updated with current state values
   useEffect(() => {
@@ -803,6 +804,16 @@ export default function InboxPage() {
   useEffect(() => {
     threadsRef.current = threads;
   }, [threads]);
+
+  // Track window focus time to ignore double-clicks that occur to focus the window
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleFocus = () => {
+      lastFocusTimeRef.current = Date.now();
+    };
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, []);
 
   // Automated seen simulation for unread threads (delays 5 to 12 minutes)
   useEffect(() => {
@@ -3475,6 +3486,13 @@ export default function InboxPage() {
 
   const handleMessageDoubleClick = async (e: React.MouseEvent, msg: InstagramMessage) => {
     e.preventDefault();
+
+    // Ignore double clicks that occur immediately after the window gains focus
+    // (prevents liking/unliking messages when the user double-clicks to focus the browser window)
+    if (Date.now() - lastFocusTimeRef.current < 500) {
+      console.log('[React] Ignored double-click focus trigger');
+      return;
+    }
 
     if (!activeThreadId) return;
     const activeThread = threads.find(t => t.id === activeThreadId);
