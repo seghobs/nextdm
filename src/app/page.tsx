@@ -802,6 +802,7 @@ export default function InboxPage() {
   const threadsRef = useRef(threads);
   const autoSeenTimersRef = useRef<Record<string, NodeJS.Timeout>>({});
   const lastFocusTimeRef = useRef<number>(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Keep refs updated with current state values
   useEffect(() => {
@@ -2275,7 +2276,7 @@ export default function InboxPage() {
   };
 
   // Simulated/Local message appending helper
-  const appendLocalMessage = (threadId: string, text: string, messageId: string) => {
+  const appendLocalMessage = (threadId: string, text: string, messageId: string, mediaPreviewUrl?: string) => {
     setThreads(prevThreads => {
       const updated = prevThreads.map(thread => {
         if (thread.id !== threadId) return thread;
@@ -2285,12 +2286,14 @@ export default function InboxPage() {
           sender_fbid: thread.viewer?.interop_messaging_user_fbid || "17842376945110023",
           timestamp_ms: String(Date.now()),
           content: {
-            __typename: "SlideMessageText",
+            __typename: mediaPreviewUrl ? "SlideMessageAttachment" : "SlideMessageText",
             text_body: text
           },
-          content_type: "TEXT",
-          igd_snippet: `Sen: ${text}`,
-          text_body: text
+          content_type: mediaPreviewUrl ? "ATTACHMENT" : "TEXT",
+          igd_snippet: mediaPreviewUrl ? "Sen: Bir fotoğraf gönderdi." : `Sen: ${text}`,
+          text_body: text,
+          media_preview_url: mediaPreviewUrl || null,
+          media_type: mediaPreviewUrl ? 'media_share' : undefined
         };
 
         const updatedEdges = [...(thread.slide_messages?.edges || []), { node: newMsgNode }];
@@ -2312,6 +2315,93 @@ export default function InboxPage() {
         return tsB - tsA;
       });
     });
+  };
+
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !activeThreadId) return;
+
+    // Reset input so user can upload the same file again if desired
+    e.target.value = '';
+
+    const threadObj = threads.find(t => t.id === activeThreadId);
+    const targetThreadId = threadObj?.thread_id || activeThreadId;
+
+    // Optimistic local preview
+    const tempMsgId = `temp_media_${Date.now()}`;
+    const localPreviewUrl = URL.createObjectURL(file);
+    appendLocalMessage(activeThreadId, 'Bir fotoğraf gönderdi.', tempMsgId, localPreviewUrl);
+
+    setIsUploadingImage(true);
+
+    try {
+      // Step 1: Upload to mercury upload.php proxy
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('cookies', JSON.stringify(cookiesRef.current || cookies));
+      formData.append('headers', JSON.stringify(headersRef.current || headers));
+      formData.append('data', JSON.stringify(postDataRef.current || postData));
+
+      const uploadRes = await fetch('/api/instagram/upload_media', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const uploadResult = await uploadRes.json();
+      if (!uploadRes.ok || !uploadResult.success) {
+        throw new Error(uploadResult.error || 'Resim yükleme sunucuda başarısız oldu');
+      }
+
+      if (uploadResult.cookies) {
+        handleUpdateCookies(uploadResult.cookies);
+      }
+
+      const attachmentFbid = uploadResult.fbid;
+
+      // Step 2: Send media mutation proxy
+      const sendRes = await fetch('/api/instagram/send_media', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          attachmentFbid,
+          threadId: targetThreadId,
+          cookies: cookiesRef.current || cookies,
+          headers: headersRef.current || headers,
+          data: postDataRef.current || postData,
+        }),
+      });
+
+      const sendResult = await sendRes.json();
+      if (!sendRes.ok || !sendResult.success) {
+        throw new Error(sendResult.error || 'Resim gönderilemedi');
+      }
+
+      if (sendResult.cookies) {
+        handleUpdateCookies(sendResult.cookies);
+      }
+      if (sendResult.headers) {
+        setHeaders(sendResult.headers);
+        setHeadersJson(JSON.stringify(sendResult.headers, null, 2));
+        localStorage.setItem('ig_headers', JSON.stringify(sendResult.headers));
+      }
+      if (sendResult.postData) {
+        setPostData(sendResult.postData);
+        setPostDataJson(JSON.stringify(sendResult.postData, null, 2));
+        localStorage.setItem('ig_postData', JSON.stringify(sendResult.postData));
+      }
+
+      console.log('Successfully uploaded and sent image attachment!');
+    } catch (err: any) {
+      console.error('Error sending image:', err);
+      alert(`Resim gönderilirken hata oluştu: ${err.message}`);
+    } finally {
+      setIsUploadingImage(false);
+      URL.revokeObjectURL(localPreviewUrl);
+    }
   };
 
   // Sending a message (Live API call or Demo simulation)
@@ -5361,12 +5451,32 @@ export default function InboxPage() {
                       <button type="submit" className="send-btn">Gönder</button>
                     ) : (
                       <>
-                        <button type="button" className="icon-btn" title="Resim Ekle">
-                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-                            <circle cx="8.5" cy="8.5" r="1.5"></circle>
-                            <polyline points="21 15 16 10 5 21"></polyline>
-                          </svg>
+                        <input 
+                          type="file" 
+                          ref={fileInputRef} 
+                          style={{ display: 'none' }} 
+                          accept="image/*" 
+                          onChange={handleImageUpload} 
+                        />
+                        <button 
+                          type="button" 
+                          className="icon-btn" 
+                          title="Resim Ekle" 
+                          disabled={isUploadingImage}
+                          onClick={() => fileInputRef.current?.click()}
+                          style={{ position: 'relative' }}
+                        >
+                          {isUploadingImage ? (
+                            <svg className="refresh-spinning" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
+                            </svg>
+                          ) : (
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                              <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                              <polyline points="21 15 16 10 5 21"></polyline>
+                            </svg>
+                          )}
                         </button>
                         <button 
                           type="button" 
