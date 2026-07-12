@@ -815,6 +815,17 @@ export default function InboxPage() {
     return () => window.removeEventListener('focus', handleFocus);
   }, []);
 
+  // Dynamically update document title with unread badge count (IGDBadgeCount simulation)
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const totalUnread = threads.filter(t => t.marked_as_unread).length;
+    if (totalUnread > 0) {
+      document.title = `(${totalUnread}) Gelen Kutusu • Direct`;
+    } else {
+      document.title = 'Gelen Kutusu • Direct';
+    }
+  }, [threads]);
+
   // Automated seen simulation for unread threads (delays 5 to 12 minutes)
   useEffect(() => {
     const currentTimers = autoSeenTimersRef.current;
@@ -4118,6 +4129,15 @@ export default function InboxPage() {
             { id: 'GENERAL', label: 'Genel' }
           ].map(tab => {
             const isActive = activeFolder === tab.id;
+            const unreadCount = threads.filter(t => {
+              const folderVal = t.folder || 'PRIMARY';
+              if (tab.id === 'PRIMARY') {
+                return (folderVal === 'PRIMARY' || folderVal === 'INBOX');
+              } else {
+                return folderVal === 'GENERAL';
+              }
+            }).filter(t => t.marked_as_unread).length;
+
             return (
               <button
                 key={tab.id}
@@ -4154,7 +4174,27 @@ export default function InboxPage() {
                   textAlign: 'center'
                 }}
               >
-                {tab.label}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                  <span>{tab.label}</span>
+                  {unreadCount > 0 && (
+                    <span style={{
+                      background: '#FF3040',
+                      color: '#fff',
+                      fontSize: '10px',
+                      fontWeight: 'bold',
+                      borderRadius: '50%',
+                      minWidth: '16px',
+                      height: '16px',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: '0 4px',
+                      lineHeight: '1'
+                    }}>
+                      {unreadCount}
+                    </span>
+                  )}
+                </div>
               </button>
             );
           })}
