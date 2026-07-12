@@ -3787,6 +3787,52 @@ export default function InboxPage() {
     }
   };
 
+  const handleMarkUnread = async (threadId: string, shouldMarkUnread: boolean) => {
+    // Find the thread to get its thread_fbid
+    const thread = threads.find(t => t.id === threadId);
+    if (!thread) return;
+
+    const threadFbid = thread.thread_fbid || thread.id;
+
+    // Instantly update local thread's marked_as_unread state in UI
+    setThreads(prevThreads => 
+      prevThreads.map(t => t.id === threadId ? { ...t, marked_as_unread: shouldMarkUnread } : t)
+    );
+
+    try {
+      const res = await fetch('/api/instagram/mark_unread', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          threadFbid,
+          unread: shouldMarkUnread,
+          cookies: cookiesRef.current,
+          headers: headersRef.current,
+          data: postDataRef.current
+        })
+      });
+
+      const result = await res.json();
+      if (!res.ok || !result.success) {
+        console.error('Failed to mark thread unread/read on Instagram:', result.error || 'Unknown error');
+        // Rollback state on error
+        setThreads(prevThreads => 
+          prevThreads.map(t => t.id === threadId ? { ...t, marked_as_unread: !shouldMarkUnread } : t)
+        );
+      } else {
+        console.log(`Successfully marked thread ${shouldMarkUnread ? 'unread' : 'read'} on Instagram:`, threadFbid);
+      }
+    } catch (err) {
+      console.error('Network error marking thread unread:', err);
+      // Rollback state on error
+      setThreads(prevThreads => 
+        prevThreads.map(t => t.id === threadId ? { ...t, marked_as_unread: !shouldMarkUnread } : t)
+      );
+    }
+  };
+
   const handleForwardMessage = async () => {
     const selectedIds = Object.keys(forwardSelectedRecipients);
     if (selectedIds.length === 0 || !forwardMessageText.trim()) return;
@@ -4046,6 +4092,22 @@ export default function InboxPage() {
     if (!thread) return;
 
     // Clear unread status locally for immediate visual response
+    if (thread.marked_as_unread) {
+      fetch('/api/instagram/mark_unread', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          threadFbid: thread.thread_fbid || thread.id,
+          unread: false,
+          cookies: cookiesRef.current || cookies,
+          headers: headersRef.current || headers,
+          data: postDataRef.current || postData
+        })
+      }).catch(err => console.error('Failed to mark read on click:', err));
+    }
+
     setThreads(prevThreads => 
       prevThreads.map(t => t.id === threadId ? { ...t, marked_as_unread: false } : t)
     );
@@ -7286,6 +7348,43 @@ export default function InboxPage() {
                   <path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"></path>
                 </svg>
                 {isPinned ? 'Sabitlemeyi Kaldır' : 'Sohbeti Sabitle'}
+              </button>
+            );
+          })()}
+
+          {(() => {
+            const thread = threads.find(t => t.id === threadContextMenu.threadId);
+            const isUnread = thread?.marked_as_unread || false;
+            return (
+              <button 
+                onClick={() => {
+                  handleMarkUnread(threadContextMenu.threadId, !isUnread);
+                  setThreadContextMenu(prev => ({ ...prev, visible: false }));
+                }}
+                style={{
+                  width: '100%',
+                  textAlign: 'left',
+                  padding: '10px 12px',
+                  background: 'none',
+                  border: 'none',
+                  color: '#fff',
+                  fontSize: '13px',
+                  cursor: 'pointer',
+                  borderRadius: '6px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  transition: 'background 0.2s',
+                  marginTop: '2px'
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.08)'}
+                onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  {isUnread ? null : <circle cx="12" cy="12" r="3" fill="#60a5fa"></circle>}
+                </svg>
+                {isUnread ? 'Okundu Olarak İşaretle' : 'Okunmadı Olarak İşaretle'}
               </button>
             );
           })()}
