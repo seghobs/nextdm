@@ -398,6 +398,11 @@ export default function InboxPage() {
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [loginFeedback, setLoginFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [typedMessage, setTypedMessage] = useState('');
+  const [isForwardModalOpen, setIsForwardModalOpen] = useState(false);
+  const [forwardMessageText, setForwardMessageText] = useState('');
+  const [forwardSelectedThreads, setForwardSelectedThreads] = useState<Set<string>>(new Set());
+  const [forwardSearchQuery, setForwardSearchQuery] = useState('');
+  const [isForwardingInProgress, setIsForwardingInProgress] = useState(false);
   const [isPollingEnabled, setIsPollingEnabled] = useState<boolean>(() => {
     if (typeof window === 'undefined') return true;
     try {
@@ -3549,6 +3554,60 @@ export default function InboxPage() {
     }
   };
 
+  const handleForwardMessage = async () => {
+    if (forwardSelectedThreads.size === 0 || !forwardMessageText.trim()) return;
+
+    if (forwardSelectedThreads.size > 5) {
+      alert('Aynı anda en fazla 5 kişiye mesaj yönlendirebilirsiniz.');
+      return;
+    }
+
+    setIsForwardingInProgress(true);
+
+    try {
+      const promises = Array.from(forwardSelectedThreads).map(async (threadId) => {
+        const thread = threads.find(t => t.id === threadId);
+        const targetThreadId = thread?.thread_id || threadId;
+
+        // Optimistically append the sent message to the active thread if it's currently open
+        if (activeThreadId === threadId) {
+          const tempMsgId = `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+          appendLocalMessage(threadId, forwardMessageText, tempMsgId);
+        }
+
+        const res = await fetch('/api/instagram/send', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            threadId: targetThreadId,
+            text: forwardMessageText,
+            cookies: cookiesRef.current,
+            headers: headersRef.current,
+            data: postDataRef.current
+          })
+        });
+
+        const result = await res.json();
+        if (!res.ok || !result.success) {
+          console.error(`Failed to forward to thread ${threadId}:`, result.error || 'Unknown error');
+        }
+      });
+
+      await Promise.all(promises);
+      console.log('Successfully forwarded message to select recipients!');
+      setIsForwardModalOpen(false);
+      setForwardSelectedThreads(new Set());
+      setForwardMessageText('');
+    } catch (err) {
+      console.error('Error forwarding message:', err);
+      alert('Mesaj yönlendirilirken bir hata oluştu.');
+    } finally {
+      setIsForwardingInProgress(false);
+    }
+  };
+
   const handleMsgContextMenu = (e: React.MouseEvent, msg: InstagramMessage) => {
     if (msg.content_type !== 'TEXT') return;
 
@@ -6012,6 +6071,316 @@ export default function InboxPage() {
         </div>
       )}
 
+      {/* FORWARD MESSAGE MODAL */}
+      {isForwardModalOpen && (
+        <div className="modal-backdrop" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10100 }} onClick={() => setIsForwardModalOpen(false)}>
+          <div style={{
+            background: 'rgba(30, 30, 30, 0.96)',
+            backdropFilter: 'blur(20px)',
+            border: '1px solid rgba(255, 255, 255, 0.1)',
+            borderRadius: '12px',
+            width: '440px',
+            height: '560px',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+            boxShadow: '0 20px 40px rgba(0,0,0,0.6)'
+          }} onClick={(e) => e.stopPropagation()}>
+            
+            {/* Header */}
+            <header style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '16px 20px',
+              borderBottom: '1px solid rgba(255, 255, 255, 0.08)'
+            }}>
+              <span style={{ fontSize: '16px', fontWeight: '700', color: '#fff' }}>Yönlendir</span>
+              <button 
+                onClick={() => setIsForwardModalOpen(false)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'rgba(255, 255, 255, 0.6)',
+                  cursor: 'pointer',
+                  padding: '4px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  transition: 'color 0.2s'
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.color = '#fff'}
+                onMouseLeave={(e) => e.currentTarget.style.color = 'rgba(255, 255, 255, 0.6)'}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+              </button>
+            </header>
+
+            {/* Token Field / Search */}
+            <div style={{
+              padding: '12px 20px',
+              borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '8px'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '13px', fontWeight: '600', color: '#fff' }}>Kime:</span>
+                <input 
+                  type="text"
+                  placeholder="Ara..."
+                  value={forwardSearchQuery}
+                  onChange={(e) => setForwardSearchQuery(e.target.value)}
+                  style={{
+                    flex: 1,
+                    background: 'none',
+                    border: 'none',
+                    color: '#fff',
+                    fontSize: '13px',
+                    outline: 'none',
+                    padding: '4px 0'
+                  }}
+                />
+              </div>
+              
+              {/* Selected recipient tokens list */}
+              {forwardSelectedThreads.size > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', maxHeight: '72px', overflowY: 'auto', paddingBottom: '4px' }}>
+                  {Array.from(forwardSelectedThreads).map(threadId => {
+                    const threadObj = threads.find(t => t.id === threadId);
+                    const partner = threadObj?.users?.[0];
+                    const label = threadObj?.is_group
+                      ? (threadObj?.thread_title || 'Grup Sohbeti')
+                      : (partner?.full_name || partner?.username || 'Kullanıcı');
+                    return (
+                      <div 
+                        key={threadId}
+                        style={{
+                          background: 'rgba(0, 149, 246, 0.15)',
+                          border: '1px solid rgba(0, 149, 246, 0.3)',
+                          borderRadius: '16px',
+                          padding: '3px 10px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          fontSize: '12px',
+                          color: '#38bdf8'
+                        }}
+                      >
+                        <span>{label}</span>
+                        <button 
+                          onClick={() => {
+                            setForwardSelectedThreads(prev => {
+                              const copy = new Set(prev);
+                              copy.delete(threadId);
+                              return copy;
+                            });
+                          }}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: '#38bdf8',
+                            cursor: 'pointer',
+                            padding: 0,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: '14px',
+                            lineHeight: 1
+                          }}
+                        >
+                          &times;
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Message Preview */}
+            <div style={{
+              background: 'rgba(0, 0, 0, 0.2)',
+              padding: '10px 20px',
+              fontSize: '12px',
+              color: 'rgba(255, 255, 255, 0.5)',
+              borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}>
+              <span style={{ fontWeight: '600' }}>Yönlendirilen Mesaj:</span>
+              <span style={{
+                color: '#fff',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                flex: 1
+              }} title={forwardMessageText}>
+                {forwardMessageText}
+              </span>
+            </div>
+
+            {/* Recipient list */}
+            <div style={{ flex: 1, overflowY: 'auto', padding: '10px 0' }}>
+              {(() => {
+                // Filter threads (exclude pending)
+                const search = forwardSearchQuery.toLowerCase().trim();
+                const eligibleThreads = threads
+                  .filter(t => t.folder !== 'PENDING')
+                  .filter(t => {
+                    if (!search) return true;
+                    const title = t.thread_title?.toLowerCase() || '';
+                    const partner = t.users?.[0];
+                    const uName = partner?.username?.toLowerCase() || '';
+                    const fName = partner?.full_name?.toLowerCase() || '';
+                    return title.includes(search) || uName.includes(search) || fName.includes(search);
+                  });
+
+                if (eligibleThreads.length === 0) {
+                  return (
+                    <div style={{ padding: '40px 20px', textAlign: 'center', color: 'rgba(255, 255, 255, 0.4)', fontSize: '13px' }}>
+                      Sohbet bulunamadı.
+                    </div>
+                  );
+                }
+
+                return eligibleThreads.map(thread => {
+                  const partner = thread.users?.[0] || { full_name: thread.thread_title, username: '', profile_pic_url: '' };
+                  const displayName = thread.is_group
+                    ? (thread.thread_title || 'Grup Sohbeti')
+                    : (partner.full_name || partner.username);
+                  const isSelected = forwardSelectedThreads.has(thread.id);
+                  const avatar = thread.is_group ? thread.thread_image_url : partner.profile_pic_url;
+
+                  return (
+                    <div 
+                      key={thread.id}
+                      onClick={() => {
+                        setForwardSelectedThreads(prev => {
+                          const copy = new Set(prev);
+                          if (copy.has(thread.id)) {
+                            copy.delete(thread.id);
+                          } else {
+                            if (copy.size >= 5) {
+                              alert('Aynı anda en fazla 5 kişiye mesaj yönlendirebilirsiniz.');
+                              return prev;
+                            }
+                            copy.add(thread.id);
+                          }
+                          return copy;
+                        });
+                      }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '8px 20px',
+                        cursor: 'pointer',
+                        background: isSelected ? 'rgba(255, 255, 255, 0.03)' : 'transparent',
+                        transition: 'background 0.2s'
+                      }}
+                      onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.015)'; }}
+                      onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = 'transparent'; }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <img 
+                          src={avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=80&h=80&fit=crop&q=80"}
+                          alt={displayName}
+                          style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' }}
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).src = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=80&h=80&fit=crop&q=80";
+                          }}
+                        />
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                          <span style={{ fontSize: '13px', fontWeight: '600', color: '#fff' }}>{displayName}</span>
+                          {!thread.is_group && partner.username && (
+                            <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)' }}>@{partner.username}</span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Circular Selection Checkbox */}
+                      <div style={{
+                        width: '20px',
+                        height: '20px',
+                        borderRadius: '50%',
+                        border: isSelected ? 'none' : '2.5px solid rgba(255, 255, 255, 0.2)',
+                        background: isSelected ? '#0095f6' : 'transparent',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        transition: 'all 0.2s'
+                      }}>
+                        {isSelected && (
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                          </svg>
+                        )}
+                      </div>
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+
+            {/* Send Bar */}
+            <div style={{
+              padding: '16px 20px',
+              borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+              display: 'flex',
+              justifyContent: 'flex-end'
+            }}>
+              <button 
+                disabled={forwardSelectedThreads.size === 0 || isForwardingInProgress}
+                onClick={handleForwardMessage}
+                style={{
+                  width: '100%',
+                  padding: '10px 0',
+                  background: forwardSelectedThreads.size === 0 ? 'rgba(0, 149, 246, 0.4)' : '#0095f6',
+                  color: forwardSelectedThreads.size === 0 ? 'rgba(255, 255, 255, 0.5)' : '#fff',
+                  border: 'none',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                  fontWeight: '600',
+                  cursor: forwardSelectedThreads.size === 0 || isForwardingInProgress ? 'not-allowed' : 'pointer',
+                  transition: 'background 0.2s',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px'
+                }}
+                onMouseEnter={(e) => {
+                  if (forwardSelectedThreads.size > 0 && !isForwardingInProgress) {
+                    e.currentTarget.style.background = '#1877f2';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (forwardSelectedThreads.size > 0 && !isForwardingInProgress) {
+                    e.currentTarget.style.background = '#0095f6';
+                  }
+                }}
+              >
+                {isForwardingInProgress ? (
+                  <>
+                    <svg className="refresh-spinning" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
+                    </svg>
+                    <span>Yönlendiriliyor...</span>
+                  </>
+                ) : (
+                  <span>Gönder ({forwardSelectedThreads.size})</span>
+                )}
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
       {/* Context Menu Dropdown */}
       {contextMenu.visible && (
         <div style={{
@@ -6388,6 +6757,40 @@ export default function InboxPage() {
               <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
             </svg>
             Kopyala
+          </button>
+
+          <button 
+            onClick={() => {
+              setForwardMessageText(msgContextMenu.text);
+              setForwardSelectedThreads(new Set());
+              setForwardSearchQuery('');
+              setIsForwardModalOpen(true);
+              setMsgContextMenu(prev => ({ ...prev, visible: false }));
+            }}
+            style={{
+              width: '100%',
+              textAlign: 'left',
+              padding: '10px 12px',
+              background: 'none',
+              border: 'none',
+              color: '#fff',
+              fontSize: '13px',
+              cursor: 'pointer',
+              borderRadius: '6px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              transition: 'background 0.2s',
+              marginTop: '2px'
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.08)'}
+            onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+            Yönlendir...
           </button>
 
           {msgContextMenu.isOwnMessage && (
