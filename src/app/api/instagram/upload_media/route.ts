@@ -30,30 +30,35 @@ export async function POST(request: NextRequest) {
       ...customHeaders,
       'cookie': cookieHeaderStr,
       'referer': 'https://www.instagram.com/direct/inbox/',
-      // Note: Do not hardcode Content-Type boundary; let fetch set it automatically from the FormData object
     };
 
-    // Build the multipart payload for Instagram mercury upload.php
-    const formToInstagram = new FormData();
-    
-    // We append the file to the field 'farr' as seen in the user's upload log
-    const fileBuffer = Buffer.from(await file.arrayBuffer());
-    const fileBlob = new Blob([fileBuffer], { type: file.type });
-    formToInstagram.append('farr', fileBlob, file.name);
+    // Build the query parameters for Instagram mercury upload.php
+    // Facebook expects all tokens (fb_dtsg, lsd, spin parameters) in the URL query string
+    const queryParams = new URLSearchParams();
+    queryParams.append('__d', 'www');
+    queryParams.append('__user', '0');
+    queryParams.append('__a', '1');
 
-    // Append common parameters
     const postDataFields = {
       ...DEFAULT_DATA,
       ...customData,
     };
 
     Object.entries(postDataFields).forEach(([key, val]) => {
-      formToInstagram.append(key, String(val));
+      queryParams.append(key, String(val));
     });
 
-    console.log(`Proxying mercury upload.php for file: ${file.name} (${file.size} bytes)...`);
+    const uploadUrl = `https://www.instagram.com/ajax/mercury/upload.php?${queryParams.toString()}`;
 
-    const instagramResponse = await fetch('https://www.instagram.com/ajax/mercury/upload.php?__d=www', {
+    // Build the multipart body containing ONLY the file field 'farr'
+    const formToInstagram = new FormData();
+    const fileBuffer = Buffer.from(await file.arrayBuffer());
+    const fileBlob = new Blob([fileBuffer], { type: file.type });
+    formToInstagram.append('farr', fileBlob, file.name);
+
+    console.log(`Proxying mercury upload.php for file: ${file.name} (${file.size} bytes) via URL params...`);
+
+    const instagramResponse = await fetch(uploadUrl, {
       method: 'POST',
       headers: headersToSend,
       body: formToInstagram,
