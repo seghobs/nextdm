@@ -4240,6 +4240,26 @@ export default function InboxPage() {
     return date.toLocaleDateString('tr-TR', { month: 'short', day: 'numeric' });
   };
 
+  const getSeenTimeLabel = (thread: InstagramThread) => {
+    if (!thread.last_seen_watermark_ms) return 'Görüldü';
+    const ts = parseInt(thread.last_seen_watermark_ms, 10);
+    if (isNaN(ts)) return 'Görüldü';
+
+    const diffMs = Date.now() - ts;
+    const diffSec = Math.floor(diffMs / 1000);
+    const diffMin = Math.floor(diffSec / 60);
+    const diffHr = Math.floor(diffMin / 60);
+    const diffDay = Math.floor(diffHr / 24);
+
+    if (diffSec < 60) return 'Görüldü (şimdi)';
+    if (diffMin < 60) return `Görüldü (${diffMin}d önce)`;
+    if (diffHr < 24) return `Görüldü (${diffHr}sa önce)`;
+    if (diffDay < 7) return `Görüldü (${diffDay}g önce)`;
+
+    const date = new Date(ts);
+    return `Görüldü (${date.toLocaleDateString('tr-TR', { month: 'short', day: 'numeric' })})`;
+  };
+
   // Filter and format group members for detail modal
   const filteredMembers = useMemo(() => {
     if (!activeThread || !activeThread.users) return [];
@@ -5562,17 +5582,12 @@ export default function InboxPage() {
                         {seen && (
                           <span style={{
                             fontSize: '11px',
-                            color: 'var(--success-color)',
+                            color: 'rgba(255, 255, 255, 0.45)',
                             display: 'inline-flex',
                             alignItems: 'center',
-                            gap: '3px',
-                            fontWeight: '600'
+                            fontWeight: 'normal'
                           }}>
-                            {/* Tiny checkmark svg */}
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                              <polyline points="20 6 9 17 4 12"></polyline>
-                            </svg>
-                            <span>Görüldü</span>
+                            <span>{getSeenTimeLabel(activeThread)}</span>
                           </span>
                         )}
                       </div>
