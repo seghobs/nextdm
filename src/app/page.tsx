@@ -2318,101 +2318,37 @@ export default function InboxPage() {
   };
 
   const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [selectedImageFile, setSelectedImageFile] = useState<File | null>(null);
+  const [selectedImagePreviewUrl, setSelectedImagePreviewUrl] = useState<string | null>(null);
 
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !activeThreadId) return;
+    if (!file) return;
 
     // Reset input so user can upload the same file again if desired
     e.target.value = '';
 
-    const threadObj = threads.find(t => t.id === activeThreadId);
-    const targetThreadId = threadObj?.thread_id || activeThreadId;
-
-    // Optimistic local preview
-    const tempMsgId = `temp_media_${Date.now()}`;
-    const localPreviewUrl = URL.createObjectURL(file);
-    appendLocalMessage(activeThreadId, 'Bir fotoğraf gönderdi.', tempMsgId, localPreviewUrl);
-
-    setIsUploadingImage(true);
-
-    try {
-      // Step 1: Upload to mercury upload.php proxy
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('cookies', JSON.stringify(cookiesRef.current || cookies));
-      formData.append('headers', JSON.stringify(headersRef.current || headers));
-      formData.append('data', JSON.stringify(postDataRef.current || postData));
-
-      const uploadRes = await fetch('/api/instagram/upload_media', {
-        method: 'POST',
-        body: formData,
-      });
-
-      const uploadResult = await uploadRes.json();
-      if (!uploadRes.ok || !uploadResult.success) {
-        throw new Error(uploadResult.error || 'Resim yükleme sunucuda başarısız oldu');
-      }
-
-      if (uploadResult.cookies) {
-        handleUpdateCookies(uploadResult.cookies);
-      }
-
-      const attachmentFbid = uploadResult.fbid;
-
-      // Step 2: Send media mutation proxy
-      const sendRes = await fetch('/api/instagram/send_media', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          attachmentFbid,
-          threadId: targetThreadId,
-          cookies: cookiesRef.current || cookies,
-          headers: headersRef.current || headers,
-          data: postDataRef.current || postData,
-        }),
-      });
-
-      const sendResult = await sendRes.json();
-      if (!sendRes.ok || !sendResult.success) {
-        throw new Error(sendResult.error || 'Resim gönderilemedi');
-      }
-
-      if (sendResult.cookies) {
-        handleUpdateCookies(sendResult.cookies);
-      }
-      if (sendResult.headers) {
-        setHeaders(sendResult.headers);
-        setHeadersJson(JSON.stringify(sendResult.headers, null, 2));
-        localStorage.setItem('ig_headers', JSON.stringify(sendResult.headers));
-      }
-      if (sendResult.postData) {
-        setPostData(sendResult.postData);
-        setPostDataJson(JSON.stringify(sendResult.postData, null, 2));
-        localStorage.setItem('ig_postData', JSON.stringify(sendResult.postData));
-      }
-
-      console.log('Successfully uploaded and sent image attachment!');
-    } catch (err: any) {
-      console.error('Error sending image:', err);
-      alert(`Resim gönderilirken hata oluştu: ${err.message}`);
-    } finally {
-      setIsUploadingImage(false);
-      URL.revokeObjectURL(localPreviewUrl);
+    if (selectedImagePreviewUrl) {
+      URL.revokeObjectURL(selectedImagePreviewUrl);
     }
+
+    setSelectedImageFile(file);
+    setSelectedImagePreviewUrl(URL.createObjectURL(file));
   };
 
   // Sending a message (Live API call or Demo simulation)
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!typedMessage.trim() || !activeThreadId) return;
+    if (!activeThreadId) return;
+
+    const hasImage = !!selectedImageFile;
+    const hasText = !!typedMessage.trim();
+
+    if (!hasImage && !hasText) return;
 
     const newMessageText = typedMessage.trim();
-
-
-
+    
+    // Clear input field immediately
     setTypedMessage('');
 
     // Clear typing timeout and send typing = false immediately
@@ -2422,67 +2358,152 @@ export default function InboxPage() {
     sendTypingIndicatorToServer(false);
     lastTypingSentRef.current = 0;
 
+    const threadObj = threads.find(t => t.id === activeThreadId);
+    const targetThreadId = threadObj?.thread_id || activeThreadId;
 
+    if (hasImage && selectedImageFile) {
+      const fileToUpload = selectedImageFile;
+      const previewUrl = selectedImagePreviewUrl;
 
-    // Live Mode: Send to API
-    try {
-      lastActivityRef.current = Date.now();
-      const response = await fetch('/api/instagram/send', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          threadId: activeThreadId,
-          text: newMessageText,
-          cookies,
-          headers,
-          data: postData,
-        }),
-      });
+      // Reset selected image states so preview goes away immediately
+      setSelectedImageFile(null);
+      setSelectedImagePreviewUrl(null);
+      setIsUploadingImage(true);
 
-      const result = await response.json();
+      // Optimistic local preview
+      const tempMsgId = `temp_media_${Date.now()}`;
+      if (previewUrl) {
+        appendLocalMessage(activeThreadId, 'Bir fotoğraf gönderdi.', tempMsgId, previewUrl);
+      }
 
-      if (!response.ok || !result.success) {
-        let errorMsg = result.error || 'Mesaj gönderilemedi';
-        if (result.details && Array.isArray(result.details)) {
-          const detailMsgs = result.details.map((d: any) => d.message || JSON.stringify(d)).join(', ');
-          errorMsg = `${errorMsg}: ${detailMsgs}`;
-        } else if (result.details && typeof result.details === 'string') {
-          errorMsg = `${errorMsg}: ${result.details}`;
+      try {
+        // Step 1: Upload to mercury upload.php proxy
+        const formData = new FormData();
+        formData.append('file', fileToUpload);
+        formData.append('cookies', JSON.stringify(cookiesRef.current || cookies));
+        formData.append('headers', JSON.stringify(headersRef.current || headers));
+        formData.append('data', JSON.stringify(postDataRef.current || postData));
+
+        const uploadRes = await fetch('/api/instagram/upload_media', {
+          method: 'POST',
+          body: formData,
+        });
+
+        const uploadResult = await uploadRes.json();
+        if (!uploadRes.ok || !uploadResult.success) {
+          throw new Error(uploadResult.error || 'Resim yükleme sunucuda başarısız oldu');
         }
+
+        if (uploadResult.cookies) {
+          handleUpdateCookies(uploadResult.cookies);
+        }
+
+        const attachmentFbid = uploadResult.fbid;
+
+        // Step 2: Send media mutation proxy
+        const sendRes = await fetch('/api/instagram/send_media', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            attachmentFbid,
+            threadId: targetThreadId,
+            cookies: cookiesRef.current || cookies,
+            headers: headersRef.current || headers,
+            data: postDataRef.current || postData,
+          }),
+        });
+
+        const sendResult = await sendRes.json();
+        if (!sendRes.ok || !sendResult.success) {
+          throw new Error(sendResult.error || 'Resim gönderilemedi');
+        }
+
+        if (sendResult.cookies) {
+          handleUpdateCookies(sendResult.cookies);
+        }
+        if (sendResult.headers) {
+          setHeaders(sendResult.headers);
+          setHeadersJson(JSON.stringify(sendResult.headers, null, 2));
+          localStorage.setItem('ig_headers', JSON.stringify(sendResult.headers));
+        }
+        if (sendResult.postData) {
+          setPostData(sendResult.postData);
+          setPostDataJson(JSON.stringify(sendResult.postData, null, 2));
+          localStorage.setItem('ig_postData', JSON.stringify(sendResult.postData));
+        }
+
+        console.log('Successfully uploaded and sent image attachment!');
+      } catch (err: any) {
+        console.error('Error sending image:', err);
+        alert(`Resim gönderilirken hata oluştu: ${err.message}`);
+      } finally {
+        setIsUploadingImage(false);
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+      }
+    }
+
+    // Now send the text message if present
+    if (hasText) {
+      try {
+        lastActivityRef.current = Date.now();
+        const response = await fetch('/api/instagram/send', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            threadId: activeThreadId,
+            text: newMessageText,
+            cookies: cookiesRef.current || cookies,
+            headers: headersRef.current || headers,
+            data: postDataRef.current || postData,
+          }),
+        });
+
+        const result = await response.json();
+
+        if (!response.ok || !result.success) {
+          let errorMsg = result.error || 'Mesaj gönderilemedi';
+          if (result.details && Array.isArray(result.details)) {
+            const detailMsgs = result.details.map((d: any) => d.message || JSON.stringify(d)).join(', ');
+            errorMsg = `${errorMsg}: ${detailMsgs}`;
+          } else if (result.details && typeof result.details === 'string') {
+            errorMsg = `${errorMsg}: ${result.details}`;
+          }
+          if (result.cookies) {
+            handleUpdateCookies(result.cookies);
+          }
+          throw new Error(errorMsg);
+        }
+
         if (result.cookies) {
           handleUpdateCookies(result.cookies);
         }
-        throw new Error(errorMsg);
-      }
+        if (result.headers) {
+          setHeaders(result.headers);
+          setHeadersJson(JSON.stringify(result.headers, null, 2));
+          localStorage.setItem('ig_headers', JSON.stringify(result.headers));
+        }
+        if (result.postData) {
+          setPostData(result.postData);
+          setPostDataJson(JSON.stringify(result.postData, null, 2));
+          localStorage.setItem('ig_data', JSON.stringify(result.postData));
+        }
 
-      // Sync any updated cookies, headers, or postData returned on success (from self-healing)
-      if (result.cookies) {
-        handleUpdateCookies(result.cookies);
-      }
-      if (result.headers) {
-        setHeaders(result.headers);
-        setHeadersJson(JSON.stringify(result.headers, null, 2));
-        localStorage.setItem('ig_headers', JSON.stringify(result.headers));
-      }
-      if (result.postData) {
-        setPostData(result.postData);
-        setPostDataJson(JSON.stringify(result.postData, null, 2));
-        localStorage.setItem('ig_data', JSON.stringify(result.postData));
-      }
+        const messageId = result.data?.ig_message_send?.message_id || `sent_${Date.now()}`;
+        appendLocalMessage(activeThreadId, newMessageText, messageId);
 
-      // Message sent successfully! Append to UI state
-      const messageId = result.data?.ig_message_send?.message_id || `sent_${Date.now()}`;
-      appendLocalMessage(activeThreadId, newMessageText, messageId);
-      
-      // Fetch fresh messages in background to sync read status and details
-      fetchLiveInbox(cookies, headers, postData, true);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Bilinmeyen hata';
-      alert(`Mesaj Gönderilemedi: ${msg}`);
-      setTypedMessage(newMessageText); // Restore typed message
+      } catch (err: any) {
+        console.error('Error sending text:', err);
+        alert(`Mesaj gönderilirken hata oluştu: ${err.message}`);
+        setTypedMessage(newMessageText); // Restore typed message
+      }
     }
+
+    // Finally sync live inbox in background
+    fetchLiveInbox(cookiesRef.current || cookies, headersRef.current || headers, postDataRef.current || postData, true);
   };
 
   // Sends a read receipt mutation to Instagram API in Live Mode
@@ -5432,6 +5453,58 @@ export default function InboxPage() {
               </div>
             ) : (
               <form className="chat-input-bar" onSubmit={handleSendMessage} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                
+                {/* Selected Image Preview panel */}
+                {selectedImagePreviewUrl && (
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    padding: '8px 12px',
+                    background: 'rgba(255, 255, 255, 0.04)',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    borderRadius: '8px',
+                    marginBottom: '4px',
+                    position: 'relative'
+                  }}>
+                    <div style={{ position: 'relative', width: '50px', height: '50px', borderRadius: '6px', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.1)' }}>
+                      <img src={selectedImagePreviewUrl} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    </div>
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                      <span style={{ fontSize: '12px', fontWeight: '600', color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {selectedImageFile?.name}
+                      </span>
+                      <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.4)' }}>
+                        {selectedImageFile ? `${(selectedImageFile.size / 1024).toFixed(1)} KB` : ''}
+                      </span>
+                    </div>
+                    <button 
+                      type="button" 
+                      onClick={() => {
+                        if (selectedImagePreviewUrl) URL.revokeObjectURL(selectedImagePreviewUrl);
+                        setSelectedImageFile(null);
+                        setSelectedImagePreviewUrl(null);
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: 'rgba(255,255,255,0.6)',
+                        cursor: 'pointer',
+                        padding: '4px',
+                        fontSize: '18px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        transition: 'color 0.2s'
+                      }}
+                      onMouseEnter={(e) => e.currentTarget.style.color = '#fff'}
+                      onMouseLeave={(e) => e.currentTarget.style.color = 'rgba(255, 255, 255, 0.6)'}
+                    >
+                      &times;
+                    </button>
+                  </div>
+                )}
+
                 <div className="chat-input-container">
                   <input 
                     ref={chatInputRef}
@@ -5447,7 +5520,7 @@ export default function InboxPage() {
                   />
                   
                   <div className="chat-input-buttons">
-                    {typedMessage.trim() ? (
+                    {(typedMessage.trim() || selectedImageFile) ? (
                       <button type="submit" className="send-btn">Gönder</button>
                     ) : (
                       <>
