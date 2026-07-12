@@ -89,6 +89,12 @@ const deduplicateMessageEdges = (edges: any[]) => {
   return result;
 };
 
+// Helper to normalize emojis by removing variation selectors for stable comparison
+const normalizeEmoji = (emoji: string) => {
+  if (!emoji) return '';
+  return emoji.replace(/[\ufe00-\ufe0f]/g, '').trim();
+};
+
 // Helper to recursively unwrap media wrappers in Instagram's REST API payload
 const unwrapMedia = (obj: any): any => {
   if (!obj) return null;
@@ -1052,7 +1058,7 @@ export default function InboxPage() {
                 let newReactions;
                 
                 if (isAdded) {
-                  const exists = currentReactions.some((r: any) => String(r.sender_fbid) === String(userId) && r.reaction === reaction);
+                  const exists = currentReactions.some((r: any) => String(r.sender_fbid) === String(userId) && normalizeEmoji(r.reaction) === normalizeEmoji(reaction));
                   if (exists) return edge;
                   newReactions = [...currentReactions, {
                     reaction,
@@ -1060,7 +1066,7 @@ export default function InboxPage() {
                     sender_fbid: String(userId)
                   }];
                 } else {
-                  newReactions = currentReactions.filter((r: any) => !(String(r.sender_fbid) === String(userId) && r.reaction === reaction));
+                  newReactions = currentReactions.filter((r: any) => !(String(r.sender_fbid) === String(userId) && normalizeEmoji(r.reaction) === normalizeEmoji(reaction)));
                 }
                 
                 return {
@@ -3485,7 +3491,7 @@ export default function InboxPage() {
     // Find the message in the thread to check if we already reacted
     const targetMsg = activeThread.slide_messages?.edges?.find((edge: any) => edge.node?.id === messageId)?.node;
     const currentReactions = targetMsg?.reactions || [];
-    const hasReacted = currentReactions.some((r: any) => String(r.sender_fbid) === viewerId && r.reaction === emoji);
+    const hasReacted = currentReactions.some((r: any) => String(r.sender_fbid) === viewerId && normalizeEmoji(r.reaction) === normalizeEmoji(emoji));
     const reactionStatus = hasReacted ? "deleted" : "created";
 
     // 1. Instantly update client UI state for snappy feedback!
@@ -3498,7 +3504,7 @@ export default function InboxPage() {
           
           let newReactions;
           if (hasReacted) {
-            newReactions = currentReactions.filter((r: any) => !(String(r.sender_fbid) === viewerId && r.reaction === emoji));
+            newReactions = currentReactions.filter((r: any) => !(String(r.sender_fbid) === viewerId && normalizeEmoji(r.reaction) === normalizeEmoji(emoji)));
           } else {
             newReactions = [...currentReactions, {
               reaction: emoji,
