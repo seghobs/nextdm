@@ -1469,11 +1469,12 @@ export default function InboxPage() {
 
         const fallbackText = text || item.igd_snippet || (item.item_type ? `[${item.item_type}]` : 'Ek içerik');
 
-        const repliedMessage = item.reply_to_message ? {
-          id: item.reply_to_message.item_id || item.reply_to_message.message_id || '',
-          text_body: item.reply_to_message.text || 'Mesaj',
-          sender_fbid: item.reply_to_message.user_id,
-          content_type: item.reply_to_message.item_type === 'text' ? 'TEXT' : 'ATTACHMENT'
+        const rawReplied = item.replied_to_message || item.reply_to_message;
+        const repliedMessage = rawReplied ? {
+          id: rawReplied.item_id || rawReplied.message_id || '',
+          text_body: rawReplied.text || 'Mesaj',
+          sender_fbid: rawReplied.user_id,
+          content_type: rawReplied.item_type === 'text' ? 'TEXT' : 'ATTACHMENT'
         } : null;
 
         return {
@@ -2798,11 +2799,12 @@ export default function InboxPage() {
 
           const fallbackText = text || item.igd_snippet || (item.item_type ? `[${item.item_type}]` : 'Ek içerik');
 
-          const repliedMessage = item.reply_to_message ? {
-            id: item.reply_to_message.item_id || item.reply_to_message.message_id || '',
-            text_body: item.reply_to_message.text || 'Mesaj',
-            sender_fbid: item.reply_to_message.user_id,
-            content_type: item.reply_to_message.item_type === 'text' ? 'TEXT' : 'ATTACHMENT'
+          const rawReplied = item.replied_to_message || item.reply_to_message;
+          const repliedMessage = rawReplied ? {
+            id: rawReplied.item_id || rawReplied.message_id || '',
+            text_body: rawReplied.text || 'Mesaj',
+            sender_fbid: rawReplied.user_id,
+            content_type: rawReplied.item_type === 'text' ? 'TEXT' : 'ATTACHMENT'
           } : null;
 
           return {
