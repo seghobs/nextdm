@@ -348,6 +348,38 @@ const VoiceMessagePlayer = ({ audioUrl, sent }: { audioUrl: string; sent: boolea
   );
 };
 
+const getSeenUsersForMessage = (msg: InstagramMessage, thread: InstagramThread) => {
+  if (!thread.users || thread.users.length === 0) return [];
+  if (!thread.participant_watermarks) return [];
+
+  const messages = thread.slide_messages?.edges?.map(e => e.node) || [];
+  if (messages.length === 0) return [];
+
+  const sortedMsgs = [...messages].sort((a, b) => Number(a.timestamp_ms) - Number(b.timestamp_ms));
+  const msgId = msg.id;
+  
+  const seenUsers = thread.users.filter(u => {
+    const uId = String(u.id || u.pk || u.interop_messaging_user_fbid);
+    const watermarkStr = thread.participant_watermarks?.[uId];
+    if (!watermarkStr) return false;
+
+    const watermark = Number(watermarkStr);
+    
+    let lastReadMsg: InstagramMessage | null = null;
+    for (let i = sortedMsgs.length - 1; i >= 0; i--) {
+      const m = sortedMsgs[i];
+      if (Number(m.timestamp_ms) <= watermark) {
+        lastReadMsg = m;
+        break;
+      }
+    }
+
+    return lastReadMsg && lastReadMsg.id === msgId;
+  });
+
+  return seenUsers;
+};
+
 export default function InboxPage() {
   // State for config credentials
   // State for config credentials loaded synchronously from localStorage
@@ -393,6 +425,7 @@ export default function InboxPage() {
   // Mode & UI states
   const [threads, setThreads] = useState<InstagramThread[]>([]);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  const [seenListModal, setSeenListModal] = useState<{ visible: boolean; users: InstagramUser[] }>({ visible: false, users: [] });
   const [searchQuery, setSearchQuery] = useState('');
   const [typingRegistry, setTypingRegistry] = useState<Record<string, boolean>>({});
   
@@ -1447,41 +1480,43 @@ export default function InboxPage() {
           }
         } else if (payload.type === 'seen') {
           console.log('[Realtime] Seen receipt received:', payload);
-          const viewerId = String(cookiesRef.current?.['ds_user_id'] || '');
-          const isFromPartner = !payload.userId || String(payload.userId) !== viewerId;
-          
-          if (isFromPartner) {
-            const rawWatermark = payload.watermark;
-            let watermarkMs = '';
-            if (rawWatermark) {
-              const num = Number(rawWatermark);
-              if (num > 10000000000000) {
-                // Microseconds (16 digits) -> convert to milliseconds
-                watermarkMs = String(Math.floor(num / 1000));
-              } else if (num < 10000000000) {
-                // Seconds (10 digits) -> convert to milliseconds
-                watermarkMs = String(num * 1000);
-              } else {
-                // Milliseconds (13 digits) -> keep as is
-                watermarkMs = String(num);
-              }
+          const rawWatermark = payload.watermark;
+          let watermarkMs = '';
+          if (rawWatermark) {
+            const num = Number(rawWatermark);
+            if (num > 10000000000000) {
+              watermarkMs = String(Math.floor(num / 1000));
+            } else if (num < 10000000000) {
+              watermarkMs = String(num * 1000);
+            } else {
+              watermarkMs = String(num);
             }
-
-            setThreads(prevThreads => {
-              return prevThreads.map(thread => {
-                const isMatch = thread.id === payload.threadId || 
-                                thread.thread_id === payload.threadId || 
-                                thread.thread_fbid === payload.threadId;
-                if (isMatch) {
-                  return {
-                    ...thread,
-                    last_seen_watermark_ms: watermarkMs || thread.last_seen_watermark_ms
-                  };
-                }
-                return thread;
-              });
-            });
           }
+
+          setThreads(prevThreads => {
+            return prevThreads.map(thread => {
+              const isMatch = thread.id === payload.threadId || 
+                              thread.thread_id === payload.threadId || 
+                              thread.thread_fbid === payload.threadId;
+              if (isMatch) {
+                const viewerId = String(cookiesRef.current?.['ds_user_id'] || '');
+                const isFromPartner = !payload.userId || String(payload.userId) !== viewerId;
+                
+                const existingWatermarks = thread.participant_watermarks || {};
+                const updatedWatermarks = {
+                  ...existingWatermarks,
+                  [String(payload.userId || '')]: watermarkMs
+                };
+
+                return {
+                  ...thread,
+                  last_seen_watermark_ms: isFromPartner ? (watermarkMs || thread.last_seen_watermark_ms) : thread.last_seen_watermark_ms,
+                  participant_watermarks: updatedWatermarks
+                };
+              }
+              return thread;
+            });
+          });
         } else if (payload.type === 'reaction') {
           console.log('[Realtime] Reaction event received:', payload);
           const { threadId, messageId, userId, reaction, isAdded } = payload;
@@ -1925,11 +1960,31 @@ export default function InboxPage() {
               }
             }
 
+            const participantWatermarks: Record<string, string> = {};
+            if (result.last_seen_at && typeof result.last_seen_at === 'object') {
+              Object.entries(result.last_seen_at).forEach(([uId, seenObj]: [string, any]) => {
+                if (seenObj?.timestamp) {
+                  const num = Number(seenObj.timestamp);
+                  let ms = String(num);
+                  if (num > 10000000000000) {
+                    ms = String(Math.floor(num / 1000));
+                  } else if (num < 10000000000) {
+                    ms = String(num * 1000);
+                  }
+                  participantWatermarks[uId] = ms;
+                }
+              });
+            }
+
             return {
               ...t,
               users: mergeThreadUsers(t.users || [], result.users || []),
               admin_user_ids: result.admin_user_ids || t.admin_user_ids || [],
               last_seen_watermark_ms: partnerWatermark || t.last_seen_watermark_ms,
+              participant_watermarks: {
+                ...(t.participant_watermarks || {}),
+                ...participantWatermarks
+              },
               slide_messages: {
                 ...t.slide_messages,
                 edges: uniqueEdges
@@ -2213,6 +2268,44 @@ export default function InboxPage() {
           }
         } catch (e) {}
 
+        const participantWatermarks: Record<string, string> = {};
+        try {
+          const watermarks = threadDetails.last_read_watermarks?.edges || [];
+          watermarks.forEach((w: any) => {
+            const memberId = String(w.node?.member_id);
+            const ts = w.node?.timestamp_ms;
+            if (memberId && ts) {
+              const num = Number(ts);
+              let ms = String(ts);
+              if (num > 10000000000000) {
+                ms = String(Math.floor(num / 1000));
+              } else if (num < 10000000000) {
+                ms = String(num * 1000);
+              }
+              participantWatermarks[memberId] = ms;
+            }
+          });
+          
+          if (threadDetails.users) {
+            threadDetails.users.forEach((u: any) => {
+              const uId = String(u.id || u.pk || u.interop_messaging_user_fbid);
+              if (uId && u.last_read_watermark_timestamp_ms) {
+                const ts = u.last_read_watermark_timestamp_ms;
+                const num = Number(ts);
+                let ms = String(ts);
+                if (num > 10000000000000) {
+                  ms = String(Math.floor(num / 1000));
+                } else if (num < 10000000000) {
+                  ms = String(num * 1000);
+                }
+                if (!participantWatermarks[uId]) {
+                  participantWatermarks[uId] = ms;
+                }
+              }
+            });
+          }
+        } catch (e) {}
+
         // Final fallback checks
         if (!partnerWatermark && threadDetails.last_read_watermark_timestamp_ms) {
           partnerWatermark = String(threadDetails.last_read_watermark_timestamp_ms);
@@ -2257,6 +2350,7 @@ export default function InboxPage() {
           users: threadDetails.users || [],
           viewer: threadDetails.viewer || node?.viewer || {},
           last_seen_watermark_ms: partnerWatermark ? String(partnerWatermark) : null,
+          participant_watermarks: participantWatermarks,
           thread_image_url: threadDetails.thread_image_url || node?.thread_image_url || null,
           admin_user_ids: threadDetails.admin_user_ids || node?.admin_user_ids || []
         };
@@ -6710,6 +6804,51 @@ export default function InboxPage() {
                           </div>
                         </div>
                       </div>
+
+                      {/* Seen Avatars */}
+                      {(() => {
+                        const seenUsers = getSeenUsersForMessage(msg, activeThread);
+                        if (seenUsers.length === 0) return null;
+                        
+                        return (
+                          <div 
+                            onClick={() => setSeenListModal({ visible: true, users: seenUsers })}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: sent ? 'flex-end' : 'flex-start',
+                              gap: '2px',
+                              marginTop: '4px',
+                              marginBottom: '2px',
+                              marginLeft: !sent ? '36px' : '0',
+                              cursor: 'pointer',
+                              width: 'fit-content',
+                              alignSelf: sent ? 'flex-end' : 'flex-start',
+                              flexWrap: 'wrap',
+                              maxWidth: '120px'
+                            }}
+                            title={`${seenUsers.map(u => u.username).join(', ')} gördü`}
+                          >
+                            {seenUsers.map((u, i) => (
+                              <img 
+                                key={u.id || u.pk}
+                                src={u.profile_pic_url || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&q=80"}
+                                alt={u.username}
+                                style={{
+                                  width: '14px',
+                                  height: '14px',
+                                  borderRadius: '50%',
+                                  objectFit: 'cover',
+                                  border: '1.5px solid #000',
+                                  marginLeft: i > 0 ? '-4px' : '0',
+                                  zIndex: 10 - i,
+                                  boxShadow: '0 1px 3px rgba(0,0,0,0.3)'
+                                }}
+                              />
+                            ))}
+                          </div>
+                        );
+                      })()}
 
                       <div className="message-metadata" style={{
                         display: 'flex',
@@ -12080,6 +12219,59 @@ export default function InboxPage() {
               )}
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* Seen Users Modal */}
+      {seenListModal.visible && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.7)',
+          backdropFilter: 'blur(8px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 11000,
+          userSelect: 'none'
+        }} onClick={() => setSeenListModal({ visible: false, users: [] })}>
+          <div style={{
+            background: '#1c1c1e',
+            borderRadius: '16px',
+            border: '1px solid rgba(255,255,255,0.1)',
+            width: '90%',
+            maxWidth: '340px',
+            padding: '20px',
+            boxShadow: '0 10px 30px rgba(0,0,0,0.5)'
+          }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <span style={{ fontSize: '16px', fontWeight: '700', color: '#fff' }}>Görenler ({seenListModal.users.length})</span>
+              <button 
+                onClick={() => setSeenListModal({ visible: false, users: [] })}
+                style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.5)', cursor: 'pointer', fontSize: '18px' }}
+              >
+                ✕
+              </button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '300px', overflowY: 'auto' }}>
+              {seenListModal.users.map(u => (
+                <div key={u.id || u.pk} style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <img 
+                    src={u.profile_pic_url || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&q=80"} 
+                    alt={u.username}
+                    style={{ width: '36px', height: '36px', borderRadius: '50%', objectFit: 'cover' }}
+                  />
+                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                    <span style={{ fontSize: '14px', fontWeight: '600', color: '#fff' }}>@{u.username}</span>
+                    {u.full_name && <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.5)' }}>{u.full_name}</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}

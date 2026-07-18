@@ -69,6 +69,7 @@ export interface InstagramThread {
   last_seen_watermark_ms?: string | null;
   thread_image_url?: string | null;
   admin_user_ids?: string[];
+  participant_watermarks?: Record<string, string> | null;
 }
 
 export const MOCK_RESPONSE = {
