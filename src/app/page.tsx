@@ -195,6 +195,142 @@ const extractPreviewUrl = (mediaObj: any): string | null => {
   return null;
 };
 
+const VoiceMessagePlayer = ({ audioUrl, sent }: { audioUrl: string; sent: boolean }) => {
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [progress, setProgress] = useState(0); // 0 to 100
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+      }
+    };
+  }, [audioUrl]);
+
+  const handlePlayPause = () => {
+    if (!audioRef.current) {
+      const audio = new Audio(audioUrl);
+      audio.addEventListener('timeupdate', () => {
+        setCurrentTime(audio.currentTime);
+        setProgress((audio.currentTime / (audio.duration || 1)) * 100);
+      });
+      audio.addEventListener('loadedmetadata', () => {
+        setDuration(audio.duration);
+      });
+      audio.addEventListener('ended', () => {
+        setIsPlaying(false);
+        setProgress(0);
+        setCurrentTime(0);
+      });
+      audioRef.current = audio;
+    }
+
+    if (isPlaying) {
+      audioRef.current.pause();
+      setIsPlaying(false);
+    } else {
+      audioRef.current.play().catch(err => console.error('Audio play error:', err));
+      setIsPlaying(true);
+    }
+  };
+
+  const formatTime = (secs: number) => {
+    const m = Math.floor(secs / 60);
+    const s = Math.floor(secs % 60);
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  };
+
+  // Generate 25 visual bars for the waveform
+  const barHeights = [
+    30, 50, 40, 60, 30, 70, 80, 50, 40, 60,
+    90, 40, 30, 50, 70, 60, 40, 80, 50, 30,
+    60, 40, 70, 50, 30
+  ];
+
+  return (
+    <div style={{
+      display: 'flex',
+      alignItems: 'center',
+      gap: '12px',
+      padding: '8px 12px',
+      borderRadius: '16px',
+      background: sent ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.05)',
+      border: '1px solid rgba(255,255,255,0.08)',
+      minWidth: '240px',
+      maxWidth: '300px',
+      userSelect: 'none',
+      margin: '4px 0'
+    }}>
+      {/* Play/Pause Button */}
+      <button 
+        type="button"
+        onClick={handlePlayPause}
+        style={{
+          width: '36px',
+          height: '36px',
+          borderRadius: '50%',
+          backgroundColor: '#fff',
+          color: '#000',
+          border: 'none',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          cursor: 'pointer',
+          flexShrink: 0,
+          boxShadow: '0 2px 6px rgba(0,0,0,0.2)',
+          transition: 'transform 0.1s ease'
+        }}
+        onMouseDown={e => e.currentTarget.style.transform = 'scale(0.95)'}
+        onMouseUp={e => e.currentTarget.style.transform = 'scale(1)'}
+      >
+        {isPlaying ? (
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <rect x="4" y="4" width="4" height="16"></rect>
+            <rect x="16" y="4" width="4" height="16"></rect>
+          </svg>
+        ) : (
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ marginLeft: '2px' }}>
+            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+          </svg>
+        )}
+      </button>
+
+      {/* Waveform Visualization & Timer */}
+      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, gap: '4px', minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '2px', height: '24px', flex: 1 }}>
+          {barHeights.map((h, i) => {
+            const barProgress = (i / barHeights.length) * 100;
+            const isActive = progress > barProgress;
+            return (
+              <div 
+                key={i} 
+                style={{
+                  flex: 1,
+                  height: `${h}%`,
+                  borderRadius: '1px',
+                  backgroundColor: isActive 
+                    ? (sent ? '#fff' : '#0095f6') 
+                    : 'rgba(255,255,255,0.2)',
+                  transition: 'background-color 0.15s ease'
+                }}
+              />
+            );
+          })}
+        </div>
+        
+        {/* Timer display */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'rgba(255,255,255,0.5)' }}>
+          <span>{formatTime(currentTime)}</span>
+          <span>{duration ? formatTime(duration) : '0:00'}</span>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export default function InboxPage() {
   // State for config credentials
   // State for config credentials loaded synchronously from localStorage
@@ -1652,6 +1788,9 @@ export default function InboxPage() {
         } else if (item.item_type === 'voice_media' && item.voice_media) {
           mediaType = 'voice_media';
           text = text || 'Bir sesli mesaj gönderdi.';
+          videoUrl = item.voice_media.media?.audio?.audio_src || 
+                     item.voice_media.media?.video_versions?.[0]?.url || 
+                     null;
         } else if (item.item_type === 'media' && item.media) {
           mediaType = 'photo';
           previewUrl = item.media.image_versions2?.candidates?.[0]?.url || null;
@@ -2845,11 +2984,16 @@ export default function InboxPage() {
     messageId: string, 
     mediaPreviewUrl?: string,
     replyToMessage?: InstagramMessage | null,
-    clientContext?: string
+    clientContext?: string,
+    mediaVideoUrl?: string,
+    mediaType?: 'media_share' | 'voice_media' | 'photo' | 'video'
   ) => {
     setThreads(prevThreads => {
       const updated = prevThreads.map(thread => {
         if (thread.id !== threadId) return thread;
+
+        const isAttachment = !!mediaPreviewUrl || !!mediaVideoUrl;
+        const mappedMediaType = mediaType || (mediaPreviewUrl ? 'media_share' : undefined);
 
         const newMsgNode: InstagramMessage = {
           id: messageId,
@@ -2857,14 +3001,15 @@ export default function InboxPage() {
           sender_fbid: thread.viewer?.interop_messaging_user_fbid || "17842376945110023",
           timestamp_ms: String(Date.now()),
           content: {
-            __typename: mediaPreviewUrl ? "SlideMessageAttachment" : "SlideMessageText",
+            __typename: isAttachment ? "SlideMessageAttachment" : "SlideMessageText",
             text_body: text
           },
-          content_type: mediaPreviewUrl ? "ATTACHMENT" : "TEXT",
-          igd_snippet: mediaPreviewUrl ? "Sen: Bir fotoğraf gönderdi." : `Sen: ${text}`,
+          content_type: isAttachment ? "ATTACHMENT" : "TEXT",
+          igd_snippet: isAttachment ? (mappedMediaType === 'voice_media' ? "Sen: Bir sesli mesaj gönderdi." : "Sen: Bir fotoğraf gönderdi.") : `Sen: ${text}`,
           text_body: text,
           media_preview_url: mediaPreviewUrl || null,
-          media_type: mediaPreviewUrl ? 'media_share' : undefined,
+          media_video_url: mediaVideoUrl || null,
+          media_type: mappedMediaType as any,
           reply_to_message: replyToMessage ? {
             id: replyToMessage.id,
             text_body: replyToMessage.text_body || replyToMessage.content?.text_body || 'Mesaj',
@@ -2998,7 +3143,8 @@ export default function InboxPage() {
     const targetThreadId = threadObj?.thread_id || activeThreadId;
     
     const tempMsgId = `temp_voice_${Date.now()}`;
-    appendLocalMessage(activeThreadId, 'Bir sesli mesaj gönderdi.', tempMsgId);
+    const localVoiceUrl = URL.createObjectURL(audioBlob);
+    appendLocalMessage(activeThreadId, 'Bir sesli mesaj gönderdi.', tempMsgId, undefined, undefined, undefined, localVoiceUrl, 'voice_media');
     
     try {
       const formData = new FormData();
@@ -3456,6 +3602,9 @@ export default function InboxPage() {
           } else if (item.item_type === 'voice_media' && item.voice_media) {
             mediaType = 'voice_media';
             text = text || 'Bir sesli mesaj gönderdi.';
+            videoUrl = item.voice_media.media?.audio?.audio_src || 
+                       item.voice_media.media?.video_versions?.[0]?.url || 
+                       null;
           } else if (item.item_type === 'media' && item.media) {
             mediaType = 'photo';
             previewUrl = item.media.image_versions2?.candidates?.[0]?.url || null;
@@ -6261,7 +6410,9 @@ export default function InboxPage() {
                             </div>
                           )}
 
-                          {hasMediaPreview ? (
+                          {msg.media_type === 'voice_media' ? (
+                            <VoiceMessagePlayer audioUrl={msg.media_video_url || ''} sent={sent} />
+                          ) : hasMediaPreview ? (
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', width: '200px' }}>
                               {/* Author row */}
                               {msg.media_author && (
