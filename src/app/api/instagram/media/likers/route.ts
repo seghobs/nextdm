@@ -1,10 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { DEFAULT_COOKIES, DEFAULT_HEADERS } from '@/lib/instagram-defaults';
 
+const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+
+function mediaIdToShortcode(mediaIdStr: string): string {
+  const cleanId = mediaIdStr.split('_')[0];
+  try {
+    let id = BigInt(cleanId);
+    let shortcode = '';
+    while (id > BigInt(0)) {
+      const remainder = Number(id % BigInt(64));
+      shortcode = ALPHABET[remainder] + shortcode;
+      id = id / BigInt(64);
+    }
+    return shortcode;
+  } catch (e) {
+    console.error('[mediaIdToShortcode] Error converting media ID:', e);
+    return mediaIdStr;
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}));
-    const { mediaId, cookies, headers } = body;
+    const { mediaId, shortcode, cookies, headers } = body;
 
     if (!mediaId) {
       return NextResponse.json({
@@ -31,24 +50,53 @@ export async function POST(request: NextRequest) {
       'sec-fetch-site': 'same-origin',
     };
 
-    // 0. Pre-check post details first to verify the like count and prevent spam blocks
+    // 0. Pre-check post details first by visiting the web page to verify the like count naturally
     let likeCount = 0;
+    const shortcodeToUse = shortcode || mediaIdToShortcode(mediaId);
+
     try {
-      console.log(`[Likers-API] Pre-checking like count for media: ${mediaId}`);
-      const infoUrl = `https://i.instagram.com/api/v1/media/${mediaId}/info/`;
-      const infoRes = await fetch(infoUrl, {
+      console.log(`[Likers-API] Pre-checking like count naturally via web page for shortcode: ${shortcodeToUse}`);
+      const pageUrl = `https://www.instagram.com/p/${shortcodeToUse}/`;
+      
+      const pageRes = await fetch(pageUrl, {
         method: 'GET',
-        headers: headersToSend,
-        cache: 'no-store'
+        headers: {
+          ...DEFAULT_HEADERS,
+          ...customHeaders,
+          'cookie': cookieHeaderStr,
+          'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        },
+        cache: 'no-store',
+        redirect: 'manual'
       });
-      if (infoRes.ok) {
-        const infoJson = await infoRes.json();
-        const item = infoJson.items?.[0] || {};
-        likeCount = item.like_count || 0;
-        console.log(`[Likers-API] Pre-checked like count: ${likeCount}`);
+
+      if (pageRes.ok) {
+        const html = await pageRes.text();
+        
+        // Extract like count from raw JSON pattern inside html
+        const likeCountMatch = html.match(/"like_count"\s*:\s*(\d+)/i);
+        if (likeCountMatch) {
+          likeCount = parseInt(likeCountMatch[1], 10);
+          console.log(`[Likers-API] Extracted like count from HTML JSON: ${likeCount}`);
+        } else {
+          // Fallback to og:description meta tag parsing
+          const ogDescMatch = html.match(/<meta[^>]+(?:property|name)=["']og:description["'][^>]+content=["']([^"']+)["']/i) ||
+                             html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']og:description["']/i);
+          if (ogDescMatch) {
+            const desc = ogDescMatch[1];
+            const likesMatch = desc.match(/^([\d.,]+)\s*(?:likes|beğenme|beğeni)/i) || desc.match(/^([\d.,]+)\s*/i);
+            if (likesMatch) {
+              const cleanNum = likesMatch[1].replace(/[,.]/g, '');
+              likeCount = parseInt(cleanNum, 10) || 0;
+              console.log(`[Likers-API] Extracted like count from og:description: ${likeCount}`);
+            }
+          }
+        }
+      } else {
+        console.warn(`[Likers-API] Web page precheck returned status ${pageRes.status}`);
       }
     } catch (e) {
-      console.warn('[Likers-API] Failed to precheck like count, continuing...', e);
+      console.warn('[Likers-API] Failed to precheck like count naturally, continuing...', e);
     }
 
     if (likeCount > 90) {

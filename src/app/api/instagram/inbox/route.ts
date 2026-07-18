@@ -10,6 +10,9 @@ export async function POST(request: NextRequest) {
     const customHeaders = body.headers || DEFAULT_HEADERS;
     const customData = body.data || DEFAULT_DATA;
 
+    const folder = body.folder || 'PRIMARY';
+    const isPending = folder === 'PENDING';
+
     // Convert cookies object into standard cookie header string
     const cookieHeaderStr = Object.entries(customCookies)
       .map(([name, val]) => `${name}=${val}`)
@@ -21,15 +24,49 @@ export async function POST(request: NextRequest) {
       ...customHeaders,
       'cookie': cookieHeaderStr,
       'content-type': 'application/x-www-form-urlencoded',
+      'x-fb-friendly-name': isPending ? 'PolarisDirectMessageRequestQuery' : (customHeaders['x-fb-friendly-name'] || DEFAULT_HEADERS['x-fb-friendly-name'] || 'PolarisDirectInboxMobileQuery'),
     };
 
-    const folder = body.folder || 'PRIMARY';
-
     // Parse and override the ig_inbox_folder variable inside variables JSON
-    const mergedData = { ...DEFAULT_DATA, ...customData };
+    const mergedData = { 
+      ...DEFAULT_DATA, 
+      ...customData,
+      fb_api_req_friendly_name: isPending ? 'PolarisDirectMessageRequestQuery' : 'PolarisDirectInboxMobileQuery',
+      doc_id: isPending ? '27512223021750545' : '27307632732226966'
+    };
+
     try {
-      const variablesObj = JSON.parse(mergedData.variables || '{}');
-      variablesObj.ig_inbox_folder = folder;
+      let variablesObj: Record<string, any> = {};
+      if (isPending) {
+        let deviceId = '2f285675-f0b4-480c-8bec-51ae03541c51';
+        if (customData.variables) {
+          try {
+            const customVars = JSON.parse(customData.variables);
+            if (customVars.device_id_for_iris_subscription) {
+              deviceId = customVars.device_id_for_iris_subscription;
+            }
+          } catch (e) {}
+        }
+        variablesObj = {
+          device_id_for_iris_subscription: deviceId,
+          __relay_internal__pv__IGD30DayAgoTimestampMsrelayprovider: String(Date.now() - 30 * 24 * 60 * 60 * 1000),
+          __relay_internal__pv__IGDPinnedThreadsRenderEnabledGKrelayprovider: true,
+          __relay_internal__pv__IGDMaxUnreadMessagesCountrelayprovider: 5,
+          __relay_internal__pv__PolarisAIGMAccountLabelEnabledrelayprovider: false,
+          __relay_internal__pv__IGDThreadListActionsEnabledGKrelayprovider: true
+        };
+      } else {
+        variablesObj = JSON.parse(DEFAULT_DATA.variables || '{}');
+        if (customData.variables) {
+          try {
+            const customVars = JSON.parse(customData.variables);
+            if (customVars.device_id_for_iris_subscription) {
+              variablesObj.device_id_for_iris_subscription = customVars.device_id_for_iris_subscription;
+            }
+          } catch (e) {}
+        }
+        variablesObj.ig_inbox_folder = folder;
+      }
       mergedData.variables = JSON.stringify(variablesObj);
     } catch (e) {
       console.warn('[Inbox-API] Failed to parse variables JSON:', e);
@@ -109,10 +146,44 @@ export async function POST(request: NextRequest) {
             ...(lsd ? { lsd } : {})
           };
 
-          const mergedHealedData = { ...DEFAULT_DATA, ...healedData };
+          const mergedHealedData = { 
+            ...DEFAULT_DATA, 
+            ...healedData,
+            fb_api_req_friendly_name: isPending ? 'PolarisDirectMessageRequestQuery' : 'PolarisDirectInboxMobileQuery',
+            doc_id: isPending ? '27512223021750545' : '27307632732226966'
+          };
           try {
-            const variablesObj = JSON.parse(mergedHealedData.variables || '{}');
-            variablesObj.ig_inbox_folder = folder;
+            let variablesObj: Record<string, any> = {};
+            if (isPending) {
+              let deviceId = '2f285675-f0b4-480c-8bec-51ae03541c51';
+              if (healedData.variables) {
+                try {
+                  const customVars = JSON.parse(healedData.variables);
+                  if (customVars.device_id_for_iris_subscription) {
+                    deviceId = customVars.device_id_for_iris_subscription;
+                  }
+                } catch (e) {}
+              }
+              variablesObj = {
+                device_id_for_iris_subscription: deviceId,
+                __relay_internal__pv__IGD30DayAgoTimestampMsrelayprovider: String(Date.now() - 30 * 24 * 60 * 60 * 1000),
+                __relay_internal__pv__IGDPinnedThreadsRenderEnabledGKrelayprovider: true,
+                __relay_internal__pv__IGDMaxUnreadMessagesCountrelayprovider: 5,
+                __relay_internal__pv__PolarisAIGMAccountLabelEnabledrelayprovider: false,
+                __relay_internal__pv__IGDThreadListActionsEnabledGKrelayprovider: true
+              };
+            } else {
+              variablesObj = JSON.parse(DEFAULT_DATA.variables || '{}');
+              if (healedData.variables) {
+                try {
+                  const customVars = JSON.parse(healedData.variables);
+                  if (customVars.device_id_for_iris_subscription) {
+                    variablesObj.device_id_for_iris_subscription = customVars.device_id_for_iris_subscription;
+                  }
+                } catch (e) {}
+              }
+              variablesObj.ig_inbox_folder = folder;
+            }
             mergedHealedData.variables = JSON.stringify(variablesObj);
           } catch (e) {}
 

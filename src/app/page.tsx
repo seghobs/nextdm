@@ -87,6 +87,33 @@ const deduplicateMessageEdges = (edges: any[]) => {
         foundDuplicate = true;
         break;
       }
+
+      // If they have different IDs but same sender and close timestamp, check if one is media share and other is link/fallback text
+      if (String(eNode.sender_fbid) === String(node.sender_fbid) && timeDiff < 6000) {
+        const nodeHasMedia = !!node.media_preview_url || (node.media_type && node.media_type !== 'text') || ['clip', 'media_share', 'story_share'].includes(node.media_type || '');
+        const eNodeHasMedia = !!eNode.media_preview_url || (eNode.media_type && eNode.media_type !== 'text') || ['clip', 'media_share', 'story_share'].includes(eNode.media_type || '');
+        
+        const isOneLinkOrFallback = eText.includes('instagram.com') || eText === 'Yeni bir mesaj' || eText === 'Yeni bir mesaj gönderildi.' || eText === '';
+        const isOtherLinkOrFallback = nodeText.includes('instagram.com') || nodeText === 'Yeni bir mesaj' || nodeText === 'Yeni bir mesaj gönderildi.' || nodeText === '';
+
+        if ((nodeHasMedia && isOneLinkOrFallback) || (eNodeHasMedia && isOtherLinkOrFallback)) {
+          const preferredForMedia = nodeHasMedia ? node : eNode;
+          const fallbackForMedia = nodeHasMedia ? eNode : node;
+
+          existingEdge.node = {
+            ...fallbackForMedia,
+            ...preferredForMedia,
+            id: preferredForMedia.id || fallbackForMedia.id,
+            text_body: (preferredForMedia.text_body || '').trim() === 'Yeni bir mesaj' || (preferredForMedia.text_body || '').trim() === 'Yeni bir mesaj gönderildi.' ? '' : (preferredForMedia.text_body || ''),
+            igd_snippet: (preferredForMedia.igd_snippet || '').trim() === 'Yeni bir mesaj' || (preferredForMedia.igd_snippet || '').trim() === 'Yeni bir mesaj gönderildi.' ? '' : (preferredForMedia.igd_snippet || ''),
+            reactions: eNode.reactions || node.reactions || null,
+            reply_to_message: eNode.reply_to_message || node.reply_to_message || null,
+            client_context: eNode.client_context || node.client_context || null
+          };
+          foundDuplicate = true;
+          break;
+        }
+      }
     }
 
     if (!foundDuplicate) {
@@ -394,6 +421,7 @@ export default function InboxPage() {
   const [commentsSortOrder, setCommentsSortOrder] = useState<string>('recent');
   const lastTouchTimeRef = useRef<Record<string, number>>({});
   const [activeFolder, setActiveFolder] = useState<'PRIMARY' | 'GENERAL' | 'PENDING'>('PRIMARY');
+  const [threadErrors, setThreadErrors] = useState<Record<string, string>>({});
   const contextMenuJustOpenedRef = useRef<boolean>(false);
 
   const [isFetching, setIsFetching] = useState(false);
@@ -401,10 +429,13 @@ export default function InboxPage() {
   const [fetchSuccess, setFetchSuccess] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
-  const [loginMethod, setLoginMethod] = useState<'curl' | 'credentials'>('credentials');
+  const [loginMethod, setLoginMethod] = useState<'curl' | 'credentials' | 'magic_link'>('credentials');
   const [loginCurl, setLoginCurl] = useState('');
   const [loginUsername, setLoginUsername] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [loginMagicLink, setLoginMagicLink] = useState('');
+  const [isSendingMagicEmail, setIsSendingMagicEmail] = useState(false);
+  const [magicEmailFeedback, setMagicEmailFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [loginFeedback, setLoginFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [typedMessage, setTypedMessage] = useState('');
@@ -424,6 +455,17 @@ export default function InboxPage() {
   const [isUserProfileModalOpen, setIsUserProfileModalOpen] = useState(false);
   const [userProfileData, setUserProfileData] = useState<any>(null);
   const [isFetchingUserProfile, setIsFetchingUserProfile] = useState(false);
+  const [errorModal, setErrorModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    type: 'error' | 'warning' | 'info';
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    type: 'error'
+  });
 
   useEffect(() => {
     if (isForwardModalOpen || isNewMessageModalOpen) {
@@ -517,11 +559,70 @@ export default function InboxPage() {
   const [settingsFeedback, setSettingsFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Settings Panel Tabs and Sessions list states
-  const [settingsTab, setSettingsTab] = useState<'settings' | 'activities'>('settings');
+  const [settingsTab, setSettingsTab] = useState<'settings' | 'activities' | 'automation' | 'ai'>('settings');
   const [loginSessions, setLoginSessions] = useState<any[]>([]);
   const [isLoadingSessions, setIsLoadingSessions] = useState(false);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
   const [isLoggingOutSession, setIsLoggingOutSession] = useState(false);
+
+  // Automation Panel states
+  const [autoSettings, setAutoSettings] = useState<{
+    enabled: boolean;
+    threads: string[];
+    check_hours: string[];
+    dm_template: string;
+    group_report_template: string;
+    break_minutes: number;
+    dm_delay_seconds: number;
+    comment_check_enabled: boolean;
+    like_check_enabled: boolean;
+    auto_dm_enabled: boolean;
+    auto_group_report_enabled: boolean;
+    scan_mode: string;
+    target_username: string;
+    admin_report_enabled: boolean;
+    admin_username: string;
+    scan_date: string;
+    dm_bulk_template: string;
+    ai_assistant_enabled: boolean;
+    ai_api_key: string;
+    ai_model: string;
+    ai_system_prompt: string;
+    ai_delay_seconds: number;
+    exempt_usernames: string;
+    threads_config: Record<string, { comment_check_enabled: boolean; like_check_enabled: boolean; admin_report_enabled: boolean; admin_username: string; scan_mode: string }>;
+  }>({
+    enabled: false,
+    threads: [],
+    check_hours: ['09:00', '13:00', '17:00', '21:00'],
+    dm_template: '',
+    group_report_template: '',
+    break_minutes: 5,
+    dm_delay_seconds: 30,
+    comment_check_enabled: true,
+    like_check_enabled: true,
+    auto_dm_enabled: true,
+    auto_group_report_enabled: true,
+    scan_mode: 'all',
+    target_username: '',
+    admin_report_enabled: false,
+    admin_username: '',
+    scan_date: 'yesterday',
+    dm_bulk_template: 'Merhaba {grup_ismi} grubunda eksiğiniz var dönüş yapmanız gerekiyor',
+    ai_assistant_enabled: false,
+    ai_api_key: '',
+    ai_model: 'openrouter/free',
+    ai_system_prompt: 'Sen bir Instagram grup otomasyon asistanısın. Üyelerin eksik bildirimlerine ve sorularına nazikçe ve Türkçe cevap ver.',
+    ai_delay_seconds: 30,
+    exempt_usernames: '',
+    threads_config: {}
+  });
+  const [automationLogs, setAutomationLogs] = useState<any[]>([]);
+  const [isLogsLoading, setIsLogsLoading] = useState(false);
+  const [isSavingAutomation, setIsSavingAutomation] = useState(false);
+  const [isResettingAutomation, setIsResettingAutomation] = useState(false);
+  const [isUndoingAutomation, setIsUndoingAutomation] = useState(false);
+  const [isTriggeringAutomation, setIsTriggeringAutomation] = useState(false);
 
   // Scroll ref for chat
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -554,6 +655,18 @@ export default function InboxPage() {
     if (isLoggedIn) {
       fetchLiveInbox(cookies, headers, postData);
     }
+  }, [isLoggedIn]);
+
+  // Periodic background inbox sync as a safety fallback in case MQTT drops or lags
+  useEffect(() => {
+    if (!isLoggedIn) return;
+
+    const interval = setInterval(() => {
+      console.log('[Fallback-Sync] Running periodic inbox update...');
+      fetchLiveInbox(cookiesRef.current, headersRef.current, postDataRef.current || postData, true);
+    }, 25000); // Poll every 25 seconds
+
+    return () => clearInterval(interval);
   }, [isLoggedIn]);
 
   // Scroll to bottom of messages when active thread or messages change
@@ -704,10 +817,13 @@ export default function InboxPage() {
     return () => clearInterval(interval);
   }, []);
 
-  // Auto-refresh messages in background when active thread changes in live mode
+  // Load thread history when activeThreadId changes
   useEffect(() => {
     if (activeThreadId) {
-      fetchLiveInbox(cookies, headers, postData, true);
+      const activeT = threads.find(t => t.id === activeThreadId);
+      if (activeT) {
+        fetchThreadHistory(activeT);
+      }
     }
   }, [activeThreadId]);
 
@@ -1093,13 +1209,21 @@ export default function InboxPage() {
           console.log('[Realtime] Live message received:', payload);
           
           if (payload.threadId && payload.message) {
-            // Skip local appends for empty messages (such as seen receipts or typing statuses sent on topic 146)
-            const hasText = payload.message.text_body && payload.message.text_body.trim() !== '';
-            const hasSnippet = payload.message.igd_snippet && payload.message.igd_snippet.trim() !== '';
-            if (!hasText && !hasSnippet) {
-              console.log('[Realtime] Skipping local append for empty message (status patch/read receipt)');
-              return;
+            // Trigger instant seen check on backend if message is from partner
+            const viewerId = String(cookiesRef.current?.['ds_user_id'] || '');
+            const isSentByViewer = String(payload.message.sender_fbid) === viewerId;
+            if (!isSentByViewer) {
+              fetch('/api/instagram/automation/trigger_seen_instant', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ threadId: payload.threadId })
+              }).catch(err => {
+                console.log('[Realtime] Failed to trigger instant auto-seen:', err);
+              });
             }
+
+            // Fallback text if both text_body and igd_snippet are empty (e.g., media/link shares)
+            const msgText = payload.message.text_body || payload.message.igd_snippet || 'Yeni bir mesaj';
             
             // Append message locally for instant UI update!
             setThreads(prevThreads => {
@@ -1116,19 +1240,19 @@ export default function InboxPage() {
                     id: payload.message.id,
                     sender_fbid: payload.message.sender_fbid,
                     timestamp_ms: payload.message.timestamp_ms,
-                    text_body: payload.message.text_body || '',
-                    igd_snippet: payload.message.igd_snippet || payload.message.text_body || '',
+                    text_body: msgText,
+                    igd_snippet: msgText,
                     content_type: payload.message.content_type || 'TEXT',
                     content: {
                       __typename: 'SlideMessageText',
-                      text_body: payload.message.text_body || '',
+                      text_body: msgText,
                     }
                   };
 
                   const viewerId = String(thread.viewer?.id || thread.viewer?.viewer_id || cookiesRef.current['ds_user_id'] || '');
                   const isSentByViewer = String(payload.message.sender_fbid) === viewerId;
                   const isCurrentlyActive = activeThreadIdRef.current === thread.id;
-                  const markedAsUnread = !isSentByViewer && !isCurrentlyActive ? true : thread.marked_as_unread;
+                  const markedAsUnread = (isSentByViewer || isCurrentlyActive) ? false : true;
 
                   return {
                     ...thread,
@@ -1152,15 +1276,22 @@ export default function InboxPage() {
             });
           }
 
-          // Debounce the background sync to pull official state from Instagram
-          if (fetchTimeoutRef.current) {
-            clearTimeout(fetchTimeoutRef.current);
-          }
+          if (payload.threadId) {
+            if (fetchTimeoutRef.current) {
+              clearTimeout(fetchTimeoutRef.current);
+            }
 
-          fetchTimeoutRef.current = setTimeout(() => {
-            console.log('[Realtime] Background sync triggering fetchLiveInbox...');
-            fetchLiveInbox(cookiesRef.current, headersRef.current, postData, true);
-          }, 1000); // 1-second delay to avoid spamming calls
+            fetchTimeoutRef.current = setTimeout(() => {
+              const activeT = threadsRef.current.find(t => t.id === payload.threadId || t.thread_id === payload.threadId || t.thread_fbid === payload.threadId);
+              if (activeT) {
+                console.log(`[Realtime] Syncing history only for thread: ${payload.threadId}`);
+                fetchThreadHistory(activeT, true);
+              } else {
+                console.log('[Realtime] New thread received. Refreshing inbox...');
+                fetchLiveInbox(cookiesRef.current, headersRef.current, postDataRef.current || postData, true);
+              }
+            }, 1000);
+          }
         } else if (payload.type === 'seen') {
           console.log('[Realtime] Seen receipt received:', payload);
           const viewerId = String(cookiesRef.current?.['ds_user_id'] || '');
@@ -1272,16 +1403,7 @@ export default function InboxPage() {
       } catch (e) {
         // Fallback for legacy text data
         if (event.data === 'message') {
-          console.log('[Realtime] Live message trigger received from socket bridge. Debouncing sync...');
-          
-          if (fetchTimeoutRef.current) {
-            clearTimeout(fetchTimeoutRef.current);
-          }
-
-          fetchTimeoutRef.current = setTimeout(() => {
-            console.log('[Realtime] Debounced sync triggering fetchLiveInbox...');
-            fetchLiveInbox(cookiesRef.current, headersRef.current, postData, true);
-          }, 1000); // 1-second debounce window
+          console.log('[Realtime] Legacy raw message trigger received. Skipping full inbox sync.');
         } else if (event.data === 'connected') {
           console.log('[Realtime] Live socket bridge connection established.');
         }
@@ -1401,8 +1523,16 @@ export default function InboxPage() {
 
       const result = await response.json();
       if (!response.ok || !result.success) {
-        throw new Error(result.error || 'Failed to fetch thread history');
+        const errorMsg = result.error || 'Failed to fetch thread history';
+        setThreadErrors(prev => ({ ...prev, [threadId]: errorMsg }));
+        throw new Error(errorMsg);
       }
+
+      setThreadErrors(prev => {
+        const copy = { ...prev };
+        delete copy[threadId];
+        return copy;
+      });
 
       if (result.cookies) {
         handleUpdateCookies(result.cookies);
@@ -1602,7 +1732,7 @@ export default function InboxPage() {
       setThreads(prevThreads => {
         return prevThreads.map(t => {
           if (t.id === threadId) {
-            const existingEdges = t.slide_messages?.edges || [];
+            const existingEdges = force ? [] : (t.slide_messages?.edges || []);
             const uniqueEdges = deduplicateMessageEdges([...mappedMessages.map(m => ({ node: m })), ...existingEdges]);
 
             // Try to extract partner watermark from result.last_seen_at
@@ -1895,7 +2025,11 @@ export default function InboxPage() {
                     subInfo.threads_by_system_folder_and_ig_inbox_folder?.edges || 
                     [];
       if (edges.length === 0) {
-        throw new Error('No threads returned. Check if your account is active and has messages.');
+        setThreads([]);
+        setFetchError(null);
+        setIsFetching(false);
+        fetchInProgressRef.current = false;
+        return;
       }
 
       const liveThreads: InstagramThread[] = edges.map((edge: any) => {
@@ -1954,7 +2088,7 @@ export default function InboxPage() {
           thread_id: threadDetails.thread_id,
           thread_key: threadDetails.thread_key,
           thread_title: threadDetails.thread_title || 'Instagram User',
-          folder: threadDetails.folder || node?.folder || folder,
+          folder: (threadDetails.system_folder === 'PENDING' || threadDetails.messaging_folder_tag === 'PENDING' || node?.system_folder === 'PENDING' || node?.messaging_folder_tag === 'PENDING') ? 'PENDING' : (threadDetails.folder || node?.folder || folder),
           is_group: threadDetails.is_group || false,
           is_muted: threadDetails.is_muted || false,
           is_pin: threadDetails.is_pin || false,
@@ -1993,22 +2127,27 @@ export default function InboxPage() {
             const isLastMsgFromPartner = lastMsg && String(lastMsg.sender_fbid) !== viewerId;
             
             let markedAsUnread = newThread.marked_as_unread;
-            if (!isCurrentlyActive) {
-              if (existingThread.marked_as_unread) {
-                markedAsUnread = true;
-              } else if (isLastMsgFromPartner) {
-                const existingLastMsg = [...existingEdges].sort((a, b) => {
-                  const tsA = parseInt(a.node?.timestamp_ms || '0', 10);
-                  const tsB = parseInt(b.node?.timestamp_ms || '0', 10);
-                  return tsA - tsB;
-                })[existingEdges.length - 1]?.node;
-                
-                if (!existingLastMsg || parseInt(lastMsg.timestamp_ms || '0', 10) > parseInt(existingLastMsg.timestamp_ms || '0', 10)) {
-                  markedAsUnread = true;
-                }
-              }
-            } else {
+            if (isCurrentlyActive) {
               markedAsUnread = false;
+            } else if (!isLastMsgFromPartner) {
+              // If the last message was sent by the viewer, the thread cannot be unread for us
+              markedAsUnread = false;
+            } else {
+              // If the last message is from the partner and it is a new message, mark it as unread
+              const existingLastMsg = [...existingEdges].sort((a, b) => {
+                const tsA = parseInt(a.node?.timestamp_ms || '0', 10);
+                const tsB = parseInt(b.node?.timestamp_ms || '0', 10);
+                return tsA - tsB;
+              })[existingEdges.length - 1]?.node;
+              
+              const isNewMessage = !existingLastMsg || parseInt(lastMsg.timestamp_ms || '0', 10) > parseInt(existingLastMsg.timestamp_ms || '0', 10);
+              
+              if (isNewMessage) {
+                markedAsUnread = true;
+              } else {
+                // Otherwise trust the server's read state
+                markedAsUnread = newThread.marked_as_unread;
+              }
             }
 
             mergedThreads[idx] = {
@@ -2046,7 +2185,11 @@ export default function InboxPage() {
       if (activeThreadIdRef.current) {
         const activeT = liveThreads.find(t => t.id === activeThreadIdRef.current);
         if (activeT) {
-          fetchThreadHistory(activeT, true);
+          const existingActiveT = threadsRef.current.find(t => t.id === activeThreadIdRef.current);
+          const hasNewActivity = !existingActiveT || activeT.last_activity_timestamp_ms !== existingActiveT.last_activity_timestamp_ms;
+          if (!background || hasNewActivity) {
+            fetchThreadHistory(activeT, true);
+          }
         }
       }
 
@@ -2215,6 +2358,273 @@ export default function InboxPage() {
     }
   }, [isSettingsOpen, settingsTab]);
 
+  const fetchAutomationSettings = async () => {
+    try {
+      const res = await fetch('/api/instagram/automation/settings');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.settings) {
+          const s = data.settings;
+          const configsDict: Record<string, { comment_check_enabled: boolean, like_check_enabled: boolean, admin_report_enabled: boolean, admin_username: string, scan_mode: string }> = {};
+          if (data.threads_config && Array.isArray(data.threads_config)) {
+            data.threads_config.forEach((cfg: any) => {
+              configsDict[cfg.thread_id] = {
+                comment_check_enabled: cfg.comment_check_enabled === 1,
+                like_check_enabled: cfg.like_check_enabled === 1,
+                admin_report_enabled: cfg.admin_report_enabled === 1,
+                admin_username: cfg.admin_username || '',
+                scan_mode: cfg.scan_mode || 'all'
+              };
+            });
+          }
+
+          setAutoSettings({
+            enabled: s.enabled === 1,
+            threads: s.threads ? s.threads.split(',') : [],
+            check_hours: s.check_hours ? s.check_hours.split(',') : ['09:00', '13:00', '17:00', '21:00'],
+            dm_template: s.dm_template || '',
+            group_report_template: s.group_report_template || '',
+            break_minutes: s.break_minutes ?? 5,
+            dm_delay_seconds: s.dm_delay_seconds ?? 30,
+            comment_check_enabled: s.comment_check_enabled !== 0,
+            like_check_enabled: s.like_check_enabled !== 0,
+            auto_dm_enabled: s.auto_dm_enabled !== 0,
+            auto_group_report_enabled: s.auto_group_report_enabled !== 0,
+            scan_mode: s.scan_mode || 'all',
+            target_username: s.target_username || '',
+            admin_report_enabled: s.admin_report_enabled === 1,
+            admin_username: s.admin_username || '',
+            scan_date: s.scan_date || 'yesterday',
+            dm_bulk_template: s.dm_bulk_template || 'Merhaba {grup_ismi} grubunda eksiğiniz var dönüş yapmanız gerekiyor',
+            ai_assistant_enabled: s.ai_assistant_enabled === 1,
+            ai_api_key: s.ai_api_key || '',
+            ai_model: s.ai_model || 'openrouter/free',
+            ai_system_prompt: s.ai_system_prompt || 'Sen bir Instagram grup otomasyon asistanısın. Üyelerin eksik bildirimlerine ve sorularına nazikçe ve Türkçe cevap ver.',
+            ai_delay_seconds: s.ai_delay_seconds ?? 30,
+            exempt_usernames: s.exempt_usernames || '',
+            threads_config: configsDict
+          });
+        }
+      }
+    } catch (e) {
+      console.error('Error fetching automation settings:', e);
+    }
+  };
+
+  const fetchAutomationLogs = async () => {
+    setIsLogsLoading(true);
+    try {
+      const res = await fetch('/api/instagram/automation/logs');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.logs) {
+          setAutomationLogs(data.logs);
+        }
+      }
+    } catch (e) {
+      console.error('Error fetching automation logs:', e);
+    } finally {
+      setIsLogsLoading(false);
+    }
+  };
+
+  const handleSaveAutomationSettings = async (customConfig?: Partial<typeof autoSettings>) => {
+    setIsSavingAutomation(true);
+    setSettingsFeedback(null);
+    try {
+      const config = { ...autoSettings, ...customConfig };
+      const threadsConfigArray = Object.entries(config.threads_config).map(([tid, cfg]) => ({
+        thread_id: tid,
+        comment_check_enabled: cfg.comment_check_enabled,
+        like_check_enabled: cfg.like_check_enabled,
+        admin_report_enabled: cfg.admin_report_enabled,
+        admin_username: cfg.admin_username || '',
+        scan_mode: cfg.scan_mode || 'all'
+      }));
+
+      const payload = {
+        enabled: config.enabled,
+        threads: config.threads.join(','),
+        check_hours: config.check_hours.join(','),
+        dm_template: config.dm_template,
+        group_report_template: config.group_report_template,
+        break_minutes: config.break_minutes,
+        dm_delay_seconds: config.dm_delay_seconds,
+        comment_check_enabled: config.comment_check_enabled,
+        like_check_enabled: config.like_check_enabled,
+        auto_dm_enabled: config.auto_dm_enabled,
+        auto_group_report_enabled: config.auto_group_report_enabled,
+        cookies: cookiesRef.current,
+        headers: headersRef.current,
+        post_data: postDataRef.current,
+        scan_mode: config.scan_mode,
+        target_username: config.target_username,
+        admin_report_enabled: config.admin_report_enabled,
+        admin_username: config.admin_username,
+        scan_date: config.scan_date,
+        dm_bulk_template: config.dm_bulk_template,
+        ai_assistant_enabled: config.ai_assistant_enabled,
+        ai_api_key: config.ai_api_key,
+        ai_model: config.ai_model,
+        ai_system_prompt: config.ai_system_prompt,
+        ai_delay_seconds: config.ai_delay_seconds,
+        exempt_usernames: config.exempt_usernames,
+        threads_config: threadsConfigArray
+      };
+
+      const res = await fetch('/api/instagram/automation/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setSettingsFeedback({
+          type: 'success',
+          message: 'Otomasyon ayarları başarıyla kaydedildi.'
+        });
+      } else {
+        setSettingsFeedback({
+          type: 'error',
+          message: data.error || 'Ayarlar kaydedilirken hata oluştu.'
+        });
+      }
+    } catch (err: any) {
+      setSettingsFeedback({
+        type: 'error',
+        message: err.message || 'Bir hata oluştu.'
+      });
+    } finally {
+      setIsSavingAutomation(false);
+      setTimeout(() => setSettingsFeedback(null), 8000);
+    }
+  };
+
+  const handleResetAutomation = async () => {
+    if (!window.confirm('Otomasyon geçmişi, kilitli gönderiler ve gönderilen DM kayıtları sıfırlanacak. Emin misiniz?')) {
+      return;
+    }
+    setIsResettingAutomation(true);
+    setSettingsFeedback(null);
+    try {
+      const res = await fetch('/api/instagram/automation/reset', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        alert('Otomasyon geçmişi ve kilitli gönderiler başarıyla sıfırlandı!');
+        setSettingsFeedback({
+          type: 'success',
+          message: 'Otomasyon geçmişi ve kilitli gönderiler başarıyla sıfırlandı!'
+        });
+        fetchAutomationLogs();
+      } else {
+        alert(data.error || 'Sıfırlama sırasında hata oluştu.');
+        setSettingsFeedback({
+          type: 'error',
+          message: data.error || 'Sıfırlama sırasında hata oluştu.'
+        });
+      }
+    } catch (e: any) {
+      alert(e.message || 'Sıfırlama sırasında hata oluştu.');
+      setSettingsFeedback({
+        type: 'error',
+        message: e.message || 'Sıfırlama sırasında hata oluştu.'
+      });
+    } finally {
+      setIsResettingAutomation(false);
+      setTimeout(() => setSettingsFeedback(null), 8000);
+    }
+  };
+
+  const handleUndoAutomation = async () => {
+    if (!window.confirm('Son çalışmada gönderilen tüm otomasyon DM mesajları geri alınacak (silinecek). Emin misiniz?')) {
+      return;
+    }
+    setIsUndoingAutomation(true);
+    setSettingsFeedback(null);
+    try {
+      const res = await fetch('/api/instagram/automation/undo', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        alert(data.message || 'Gönderilen mesajlar başarıyla geri alındı (silindi)!');
+        setSettingsFeedback({
+          type: 'success',
+          message: data.message || 'Gönderilen mesajlar başarıyla geri alındı (silindi)!'
+        });
+        fetchAutomationLogs();
+        // Clear all thread cursors and local message edges to force a clean, live reload
+        setThreadCursors({});
+        setThreads([]);
+        
+        // Reset the fetch lock to guarantee the new request is not ignored
+        fetchInProgressRef.current = false;
+        
+        // Immediately fetch the live inbox (updates the left-pane thread list and snippets)
+        fetchLiveInbox(cookiesRef.current, headersRef.current, postDataRef.current || postData, true);
+        
+        // If there's an active thread open, force-refresh its chat history panel
+        if (activeThread) {
+          fetchThreadHistory(activeThread, true);
+        }
+      } else {
+        alert(data.error || 'Geri alınacak herhangi bir otomasyon mesajı kaydı bulunamadı.');
+        setSettingsFeedback({
+          type: 'error',
+          message: data.error || 'Geri alma işlemi sırasında hata oluştu.'
+        });
+      }
+    } catch (e: any) {
+      alert(e.message || 'Geri alma işlemi sırasında hata oluştu.');
+      setSettingsFeedback({
+        type: 'error',
+        message: e.message || 'Geri alma işlemi sırasında hata oluştu.'
+      });
+    } finally {
+      setIsUndoingAutomation(false);
+      setTimeout(() => setSettingsFeedback(null), 8000);
+    }
+  };
+
+  const handleTriggerAutomationManual = async () => {
+    if (isTriggeringAutomation) return;
+    setIsTriggeringAutomation(true);
+    setSettingsFeedback(null);
+    try {
+      const res = await fetch('/api/instagram/automation/trigger', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setSettingsFeedback({
+          type: 'success',
+          message: 'Otomasyon taraması arka planda manuel olarak başlatıldı. Log listesinden takip edebilirsiniz.'
+        });
+        // Reload logs after 2 seconds
+        setTimeout(fetchAutomationLogs, 2000);
+      } else {
+        setSettingsFeedback({
+          type: 'error',
+          message: data.error || 'Tarama başlatılamadı.'
+        });
+      }
+    } catch (err: any) {
+      setSettingsFeedback({
+        type: 'error',
+        message: err.message || 'Hata oluştu.'
+      });
+    } finally {
+      setIsTriggeringAutomation(false);
+      setTimeout(() => setSettingsFeedback(null), 8000);
+    }
+  };
+
+  useEffect(() => {
+    if (isSettingsOpen) {
+      fetchAutomationSettings();
+      if (settingsTab === 'automation') {
+        fetchAutomationLogs();
+      }
+    }
+  }, [isSettingsOpen, settingsTab]);
+
   // Reset settings tab to default when drawer closes
   useEffect(() => {
     if (!isSettingsOpen) {
@@ -2326,8 +2736,41 @@ export default function InboxPage() {
     setHeadersJson(JSON.stringify(DEFAULT_HEADERS, null, 2));
     setPostDataJson(JSON.stringify(DEFAULT_DATA, null, 2));
     setIsLoggedIn(false);
-    setIsSettingsOpen(false);
     setLoginFeedback(null);
+  };
+
+  const handleSendMagicEmail = async () => {
+    if (!loginUsername) {
+      setMagicEmailFeedback({ type: 'error', message: 'Lütfen kullanıcı adınızı girin.' });
+      return;
+    }
+    setMagicEmailFeedback(null);
+    setIsSendingMagicEmail(true);
+    try {
+      const response = await fetch('/api/instagram/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          method: 'send_magic_link_email',
+          username: loginUsername
+        })
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || 'E-posta gönderimi başarısız oldu.');
+      }
+      setMagicEmailFeedback({
+        type: 'success',
+        message: result.message || 'Giriş bağlantısı e-postanıza gönderildi!'
+      });
+    } catch (err: any) {
+      setMagicEmailFeedback({
+        type: 'error',
+        message: err.message || 'Bir hata oluştu.'
+      });
+    } finally {
+      setIsSendingMagicEmail(false);
+    }
   };
 
   // Submit login data to server endpoint
@@ -2344,7 +2787,8 @@ export default function InboxPage() {
           method: loginMethod,
           curl: loginMethod === 'curl' ? loginCurl : undefined,
           username: loginMethod === 'credentials' ? loginUsername : undefined,
-          password: loginMethod === 'credentials' ? loginPassword : undefined
+          password: loginMethod === 'credentials' ? loginPassword : undefined,
+          magicLink: loginMethod === 'magic_link' ? loginMagicLink : undefined
         })
       });
 
@@ -2382,6 +2826,7 @@ export default function InboxPage() {
         setLoginCurl('');
         setLoginUsername('');
         setLoginPassword('');
+        setLoginMagicLink('');
       }, 2000);
 
     } catch (err: any) {
@@ -2434,6 +2879,7 @@ export default function InboxPage() {
         return {
           ...thread,
           last_activity_timestamp_ms: String(Date.now()),
+          marked_as_unread: false,
           slide_messages: {
             ...(thread.slide_messages || { edges: [], __typename: "SlideMessagesConnection" }),
             edges: updatedEdges
@@ -3303,8 +3749,35 @@ export default function InboxPage() {
           });
 
           const result = await commentsRes.json();
+          
+          if (result.success && result.commentsDisabled) {
+            setErrorModal({
+              isOpen: true,
+              title: 'Yorumlar Gizli',
+              message: 'Bu gönderinin yorumları sahibi tarafından gizlenmiş veya kapatılmıştır. Yorum taraması yapılamaz.',
+              type: 'warning'
+            });
+            setCommentScan(prev => ({
+              ...prev,
+              isScanning: false,
+              isOpen: false
+            }));
+            return;
+          }
+
           if (!commentsRes.ok || !result.success) {
-            throw new Error(result.error || 'Failed to fetch comments');
+            setErrorModal({
+              isOpen: true,
+              title: 'Tarama Hatası',
+              message: result.error || 'Yorumlar yüklenemedi.',
+              type: 'error'
+            });
+            setCommentScan(prev => ({
+              ...prev,
+              isScanning: false,
+              isOpen: false
+            }));
+            return;
           }
 
           const pageComments = result.comments || [];
@@ -3414,7 +3887,12 @@ export default function InboxPage() {
 
     } catch (err: any) {
       console.error('[Scan] Error during comment scan:', err);
-      alert(`Tarama hatası: ${err.message || 'Bilinmeyen bir hata oluştu.'}`);
+      setErrorModal({
+        isOpen: true,
+        title: 'Tarama Hatası',
+        message: err.message || 'Bilinmeyen bir hata oluştu.',
+        type: 'error'
+      });
       setCommentScan(prev => ({
         ...prev,
         isScanning: false,
@@ -3432,15 +3910,22 @@ export default function InboxPage() {
 
     // Find like count from linkPreviews if available
     let localLikeCount: number | null = null;
+    let resolvedShortcode: string | null = null;
     for (const [shortcode, preview] of Object.entries(linkPreviews)) {
       if (preview && typeof preview === 'object' && (preview as any).mediaId === mediaId) {
         localLikeCount = (preview as any).likeCount ?? null;
+        resolvedShortcode = shortcode;
         break;
       }
     }
 
     if (localLikeCount !== null && localLikeCount > 90) {
-      alert(`Güvenlik Koruması: Bu gönderi 90'dan fazla beğeni aldığı için (${localLikeCount} beğeni) beğeni taraması güvenlik amacıyla durduruldu.`);
+      setErrorModal({
+        isOpen: true,
+        title: 'Güvenlik Koruması',
+        message: `Bu gönderi 90'dan fazla beğeni aldığı için (${localLikeCount} beğeni) beğeni taraması güvenlik amacıyla durduruldu.`,
+        type: 'warning'
+      });
       return;
     }
     
@@ -3466,6 +3951,7 @@ export default function InboxPage() {
         },
         body: JSON.stringify({
           mediaId,
+          shortcode: resolvedShortcode,
           cookies: cookiesRef.current,
           headers: headersRef.current,
         }),
@@ -3473,7 +3959,18 @@ export default function InboxPage() {
 
       const result = await likesRes.json();
       if (!likesRes.ok || !result.success) {
-        throw new Error(result.error || 'Failed to fetch likes');
+        setErrorModal({
+          isOpen: true,
+          title: result.error?.includes('90\'dan fazla') ? 'Güvenlik Koruması' : 'Tarama Hatası',
+          message: result.error || 'Beğeniler yüklenemedi.',
+          type: result.error?.includes('90\'dan fazla') ? 'warning' : 'error'
+        });
+        setLikeScan(prev => ({
+          ...prev,
+          isScanning: false,
+          isOpen: false
+        }));
+        return;
       }
 
       const allLikes = result.likers || [];
@@ -3534,7 +4031,12 @@ export default function InboxPage() {
 
     } catch (err: any) {
       console.error('[Scan] Error during likes scan:', err);
-      alert(`Tarama hatası: ${err.message || 'Bilinmeyen bir hata oluştu.'}`);
+      setErrorModal({
+        isOpen: true,
+        title: 'Tarama Hatası',
+        message: err.message || 'Bilinmeyen bir hata oluştu.',
+        type: 'error'
+      });
       setLikeScan(prev => ({
         ...prev,
         isScanning: false,
@@ -3776,7 +4278,9 @@ export default function InboxPage() {
     });
   };
 
-  const handleMoveThread = async (threadId: string, targetFolder: 'PRIMARY' | 'GENERAL') => {
+  const handleMoveThread = async (threadId: string, targetFolder: 'PRIMARY' | 'GENERAL', isPending?: boolean) => {
+    const isPendingThread = isPending ?? (threads.find(t => t.id === threadId)?.folder === 'PENDING');
+    
     setThreads(prevThreads => 
       prevThreads.map(t => t.id === threadId ? { ...t, folder: targetFolder } : t)
     );
@@ -3794,6 +4298,7 @@ export default function InboxPage() {
         body: JSON.stringify({
           threadId,
           folder: targetFolder === 'PRIMARY' ? 'primary' : 'general',
+          isPending: isPendingThread,
           cookies: cookiesRef.current,
           headers: headersRef.current,
         })
@@ -4327,9 +4832,14 @@ export default function InboxPage() {
 
   // Filter threads by active folder and search query
   const filteredThreads = useMemo(() => {
-    // First, filter by folder
+    // First, filter by folder and empty threads
     const folderThreads = threads.filter(thread => {
       const folderVal = thread.folder || 'PRIMARY';
+      
+      // Filter out empty non-temporary threads
+      const hasMessages = (thread.slide_messages?.edges?.length || 0) > 0 || String(thread.id).startsWith('temp_');
+      if (!hasMessages) return false;
+
       if (activeFolder === 'PRIMARY') {
         return folderVal === 'PRIMARY' || folderVal === 'INBOX';
       } else if (activeFolder === 'GENERAL') {
@@ -4608,28 +5118,194 @@ export default function InboxPage() {
           )}
 
           <form onSubmit={handleLoginSubmit}>
-            <div className="login-form-group">
-              <label className="login-form-label">Kullanıcı Adı veya E-posta</label>
-              <input
-                type="text"
-                className="login-form-input"
-                value={loginUsername}
-                onChange={(e) => setLoginUsername(e.target.value)}
-                placeholder="Kullanıcı adı, telefon veya e-posta"
-                required
-              />
+            <div style={{
+              display: 'flex',
+              background: 'rgba(255, 255, 255, 0.02)',
+              padding: '4px',
+              borderRadius: '10px',
+              border: '1px solid rgba(255, 255, 255, 0.05)',
+              marginBottom: '20px'
+            }}>
+              <button
+                type="button"
+                onClick={() => setLoginMethod('credentials')}
+                style={{
+                  flex: 1,
+                  background: loginMethod === 'credentials' ? 'rgba(255, 255, 255, 0.06)' : 'transparent',
+                  border: 'none',
+                  color: loginMethod === 'credentials' ? '#fff' : 'var(--text-muted)',
+                  padding: '8px',
+                  borderRadius: '8px',
+                  fontSize: '12px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
+              >
+                Giriş Bilgileri
+              </button>
+              <button
+                type="button"
+                onClick={() => setLoginMethod('magic_link')}
+                style={{
+                  flex: 1,
+                  background: loginMethod === 'magic_link' ? 'rgba(255, 255, 255, 0.06)' : 'transparent',
+                  border: 'none',
+                  color: loginMethod === 'magic_link' ? '#fff' : 'var(--text-muted)',
+                  padding: '8px',
+                  borderRadius: '8px',
+                  fontSize: '12px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
+              >
+                E-posta Linki
+              </button>
+              <button
+                type="button"
+                onClick={() => setLoginMethod('curl')}
+                style={{
+                  flex: 1,
+                  background: loginMethod === 'curl' ? 'rgba(255, 255, 255, 0.06)' : 'transparent',
+                  border: 'none',
+                  color: loginMethod === 'curl' ? '#fff' : 'var(--text-muted)',
+                  padding: '8px',
+                  borderRadius: '8px',
+                  fontSize: '12px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
+              >
+                cURL ile Giriş
+              </button>
             </div>
-            <div className="login-form-group" style={{ marginBottom: '24px' }}>
-              <label className="login-form-label">Şifre</label>
-              <input
-                type="password"
-                className="login-form-input"
-                value={loginPassword}
-                onChange={(e) => setLoginPassword(e.target.value)}
-                placeholder="Instagram şifreniz"
-                required
-              />
-            </div>
+
+            {loginMethod === 'credentials' ? (
+              <>
+                <div className="login-form-group">
+                  <label className="login-form-label">Kullanıcı Adı veya E-posta</label>
+                  <input
+                    type="text"
+                    className="login-form-input"
+                    value={loginUsername}
+                    onChange={(e) => setLoginUsername(e.target.value)}
+                    placeholder="Kullanıcı adı, telefon veya e-posta"
+                    required
+                  />
+                </div>
+                <div className="login-form-group" style={{ marginBottom: '24px' }}>
+                  <label className="login-form-label">Şifre</label>
+                  <input
+                    type="password"
+                    className="login-form-input"
+                    value={loginPassword}
+                    onChange={(e) => setLoginPassword(e.target.value)}
+                    placeholder="Instagram şifreniz"
+                    required
+                  />
+                </div>
+              </>
+            ) : loginMethod === 'magic_link' ? (
+              <>
+                <div className="login-form-group">
+                  <label className="login-form-label">Kullanıcı Adı</label>
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    <input
+                      type="text"
+                      className="login-form-input"
+                      value={loginUsername}
+                      onChange={(e) => setLoginUsername(e.target.value)}
+                      placeholder="Instagram kullanıcı adınız"
+                      style={{ flex: 1 }}
+                    />
+                    <button
+                      type="button"
+                      onClick={handleSendMagicEmail}
+                      disabled={isSendingMagicEmail}
+                      style={{
+                        padding: '0 16px',
+                        fontSize: '12px',
+                        fontWeight: '600',
+                        borderRadius: '8px',
+                        background: 'rgba(255, 255, 255, 0.08)',
+                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        color: '#fff',
+                        cursor: isSendingMagicEmail ? 'not-allowed' : 'pointer',
+                        whiteSpace: 'nowrap'
+                      }}
+                    >
+                      {isSendingMagicEmail ? 'Gönderiliyor...' : 'Linki Gönder'}
+                    </button>
+                  </div>
+                </div>
+
+                {magicEmailFeedback && (
+                  <div style={{
+                    fontSize: '12px',
+                    marginTop: '8px',
+                    padding: '8px 12px',
+                    borderRadius: '6px',
+                    background: magicEmailFeedback.type === 'success' ? 'rgba(46, 204, 113, 0.1)' : 'rgba(231, 76, 60, 0.1)',
+                    border: `1px solid ${magicEmailFeedback.type === 'success' ? 'rgba(46, 204, 113, 0.2)' : 'rgba(231, 76, 60, 0.2)'}`,
+                    color: magicEmailFeedback.type === 'success' ? '#2ecc71' : '#e74c3c'
+                  }}>
+                    {magicEmailFeedback.message}
+                  </div>
+                )}
+
+                <div className="login-form-group" style={{ marginTop: '16px', marginBottom: '24px' }}>
+                  <label className="login-form-label">E-posta Giriş Bağlantısı (Magic Link)</label>
+                  <textarea
+                    className="login-form-input"
+                    value={loginMagicLink}
+                    onChange={(e) => setLoginMagicLink(e.target.value)}
+                    placeholder="https://www.instagram.com/_n/web_emaillogin?uid=...&token=..."
+                    style={{
+                      height: '100px',
+                      resize: 'vertical',
+                      fontSize: '12px',
+                      padding: '10px',
+                      lineHeight: '1.4',
+                      background: 'rgba(255, 255, 255, 0.03)',
+                      border: '1px solid rgba(255, 255, 255, 0.08)',
+                      borderRadius: '8px',
+                      color: '#fff',
+                      outline: 'none'
+                    }}
+                    required={loginMethod === 'magic_link'}
+                  />
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px', display: 'block', lineHeight: '1.4' }}>
+                    Instagram'dan gelen e-postadaki "Giriş Yap" butonunun bağlantısını kopyalayıp buraya yapıştırın.
+                  </span>
+                </div>
+              </>
+            ) : (
+              <div className="login-form-group" style={{ marginBottom: '24px' }}>
+                <label className="login-form-label">cURL Komutu (bash formatında)</label>
+                <textarea
+                  className="login-form-input"
+                  value={loginCurl}
+                  onChange={(e) => setLoginCurl(e.target.value)}
+                  placeholder="curl 'https://www.instagram.com/api/v1/...' -H 'cookie: ...'"
+                  style={{
+                    height: '120px',
+                    resize: 'vertical',
+                    fontFamily: 'monospace',
+                    fontSize: '11px',
+                    padding: '10px',
+                    lineHeight: '1.4',
+                    background: 'rgba(255, 255, 255, 0.03)',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    borderRadius: '8px',
+                    color: '#fff',
+                    outline: 'none'
+                  }}
+                  required
+                />
+              </div>
+            )}
 
             <button
               type="submit"
@@ -4757,7 +5433,6 @@ export default function InboxPage() {
         <header className="sidebar-header">
           <div className="sidebar-title-container">
             <span className="sidebar-title">Gelen Kutusu</span>
-            <span className="badge-live">Live</span>
           </div>
           
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -4997,7 +5672,7 @@ export default function InboxPage() {
                   
                   <div className="thread-details">
                     <div className="thread-header-line">
-                      <span className="thread-name">
+                      <span className="thread-name" style={thread.marked_as_unread ? { fontWeight: '700', color: '#ffffff' } : undefined}>
                         {displayName}
                         {!isGroup && partner.is_verified && (
                           <span className="verified-badge" title="Onaylı Hesap">
@@ -5030,11 +5705,11 @@ export default function InboxPage() {
                     
                     <div className="thread-message-line">
                       {getThreadTypingText(thread) ? (
-                        <span className="thread-snippet" style={{ color: 'var(--accent-glow-primary, #10B981)', fontWeight: 'bold' }}>
+                        <span className="thread-snippet" style={{ color: '#ffffff', fontWeight: 'bold' }}>
                           {getThreadTypingText(thread)}
                         </span>
                       ) : (
-                        <span className="thread-snippet">{snippet}</span>
+                        <span className="thread-snippet" style={thread.marked_as_unread ? { fontWeight: '700', color: '#ffffff' } : undefined}>{snippet}</span>
                       )}
                       {thread.marked_as_unread && (
                         <div className="unread-dot-right" style={{
@@ -5147,14 +5822,14 @@ export default function InboxPage() {
                   <span className="chat-user-status">
                     {activeThread.is_group ? (
                       getThreadTypingText(activeThread) ? (
-                        <span style={{ color: 'var(--accent-glow-primary, #10B981)', fontWeight: 'bold' }}>
+                        <span style={{ color: '#ffffff', fontWeight: 'bold' }}>
                           {getThreadTypingText(activeThread)}
                         </span>
                       ) : (
                         <span>{activeThread.users?.length || 0} üye</span>
                       )
                     ) : isPartnerTyping ? (
-                      <span style={{ color: 'var(--accent-glow-primary, #10B981)', fontWeight: 'bold' }}>yazıyor...</span>
+                      <span style={{ color: '#ffffff', fontWeight: 'bold' }}>yazıyor...</span>
                     ) : (
                       <span>@{chatPartner?.username || 'instagram_user'}</span>
                     )}
@@ -5247,7 +5922,18 @@ export default function InboxPage() {
                   </button>
                 </div>
               )}
-              {(!activeThread.slide_messages?.edges || activeThread.slide_messages.edges.length === 0) ? (
+              {threadErrors[activeThread.id] ? (
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', padding: '20px', textAlign: 'center' }}>
+                  <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ marginBottom: '12px', color: '#ff4d4f' }}>
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="12" y1="8" x2="12" y2="12"></line>
+                    <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                  </svg>
+                  <span style={{ fontWeight: '600', color: 'var(--text-primary)', marginBottom: '4px' }}>Sohbet Geçmişi Alınamadı</span>
+                  <span style={{ fontSize: '13px' }}>{threadErrors[activeThread.id]}</span>
+                  <span style={{ fontSize: '11px', marginTop: '8px', opacity: 0.7 }}>Bu sohbet Instagram'da silinmiş veya erişilemez olabilir.</span>
+                </div>
+              ) : (!activeThread.slide_messages?.edges || activeThread.slide_messages.edges.length === 0) ? (
                 <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)' }}>
                   Henüz mesaj yok.
                 </div>
@@ -6191,6 +6877,64 @@ export default function InboxPage() {
                     }} />
                   )}
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setSettingsTab('automation')}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: settingsTab === 'automation' ? 'var(--accent-color)' : 'var(--text-muted)',
+                    padding: '8px 4px 12px 4px',
+                    fontSize: '13px',
+                    fontWeight: '600',
+                    cursor: 'pointer',
+                    position: 'relative',
+                    transition: 'all 0.2s ease',
+                    outline: 'none'
+                  }}
+                >
+                  Otomasyon Ayarları
+                  {settingsTab === 'automation' && (
+                    <div style={{
+                      position: 'absolute',
+                      bottom: 0,
+                      left: 0,
+                      right: 0,
+                      height: '2px',
+                      background: 'var(--accent-color)',
+                      borderRadius: '2px'
+                    }} />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSettingsTab('ai')}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: settingsTab === 'ai' ? 'var(--accent-color)' : 'var(--text-muted)',
+                    padding: '8px 4px 12px 4px',
+                    fontSize: '13px',
+                    fontWeight: '600',
+                    cursor: 'pointer',
+                    position: 'relative',
+                    transition: 'all 0.2s ease',
+                    outline: 'none'
+                  }}
+                >
+                  Yapay Zeka (AI)
+                  {settingsTab === 'ai' && (
+                    <div style={{
+                      position: 'absolute',
+                      bottom: 0,
+                      left: 0,
+                      right: 0,
+                      height: '2px',
+                      background: 'var(--accent-color)',
+                      borderRadius: '2px'
+                    }} />
+                  )}
+                </button>
               </div>
 
               {settingsTab === 'settings' ? (
@@ -6228,8 +6972,8 @@ export default function InboxPage() {
                           width: '8px',
                           height: '8px',
                           borderRadius: '50%',
-                          background: '#00f600',
-                          boxShadow: '0 0 8px #00f600',
+                          background: '#38bdf8',
+                          boxShadow: '0 0 8px rgba(56, 189, 248, 0.6)',
                           display: 'inline-block'
                         }}></span>
                       </div>
@@ -6490,7 +7234,7 @@ export default function InboxPage() {
                     </div>
                   </form>
                 </>
-              ) : (
+              ) : settingsTab === 'activities' ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                   <div style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.5', marginBottom: '8px' }}>
                     Hesabına giriş yapmak için hangi cihazların kullanıldığını gör ve aktif oturumlarını denetle.
@@ -6565,9 +7309,9 @@ export default function InboxPage() {
                             handleLogoutSession(ids);
                           }}
                           style={{
-                            background: 'rgba(237, 73, 86, 0.12)',
-                            border: '1px solid rgba(237, 73, 86, 0.25)',
-                            color: '#ff858d',
+                            background: 'rgba(0, 168, 255, 0.12)',
+                            border: '1px solid rgba(0, 168, 255, 0.25)',
+                            color: '#38bdf8',
                             width: '100%',
                             height: '38px',
                             borderRadius: '10px',
@@ -6584,14 +7328,14 @@ export default function InboxPage() {
                           }}
                           onMouseEnter={(e) => {
                             if (!isLoggingOutSession) {
-                              e.currentTarget.style.background = 'rgba(237, 73, 86, 0.2)';
-                              e.currentTarget.style.borderColor = 'rgba(237, 73, 86, 0.4)';
+                              e.currentTarget.style.background = 'rgba(0, 168, 255, 0.22)';
+                              e.currentTarget.style.borderColor = 'rgba(0, 168, 255, 0.4)';
                             }
                           }}
                           onMouseLeave={(e) => {
                             if (!isLoggingOutSession) {
-                              e.currentTarget.style.background = 'rgba(237, 73, 86, 0.12)';
-                              e.currentTarget.style.borderColor = 'rgba(237, 73, 86, 0.25)';
+                              e.currentTarget.style.background = 'rgba(0, 168, 255, 0.12)';
+                              e.currentTarget.style.borderColor = 'rgba(0, 168, 255, 0.25)';
                             }
                           }}
                         >
@@ -6673,8 +7417,9 @@ export default function InboxPage() {
                                   <span style={{
                                     fontSize: '10px',
                                     fontWeight: '700',
-                                    color: '#00f600',
-                                    background: 'rgba(0, 246, 0, 0.08)',
+                                    color: '#fff',
+                                    background: 'rgba(255, 255, 255, 0.08)',
+                                    border: '1px solid rgba(255, 255, 255, 0.15)',
                                     padding: '2px 6px',
                                     borderRadius: '4px',
                                     textTransform: 'uppercase',
@@ -6687,7 +7432,7 @@ export default function InboxPage() {
                               <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px', marginTop: '2px', fontSize: '11px', color: 'var(--text-muted)' }}>
                                 <span>{session.location || 'Bilinmeyen Konum'}</span>
                                 <span>•</span>
-                                <span style={{ color: session.is_active ? '#00f600' : 'var(--text-muted)' }}>
+                                <span style={{ color: session.is_active ? '#fff' : 'var(--text-muted)' }}>
                                   {session.is_active ? 'Çevrimiçi' : session.last_active}
                                 </span>
                               </div>
@@ -6703,9 +7448,9 @@ export default function InboxPage() {
                                   handleLogoutSession([session.id]);
                                 }}
                                 style={{
-                                  background: 'rgba(237, 73, 86, 0.08)',
-                                  border: '1px solid rgba(237, 73, 86, 0.15)',
-                                  color: '#ff858d',
+                                  background: 'rgba(0, 168, 255, 0.12)',
+                                  border: '1px solid rgba(0, 168, 255, 0.25)',
+                                  color: '#38bdf8',
                                   padding: '6px 12px',
                                   borderRadius: '8px',
                                   fontSize: '11px',
@@ -6720,14 +7465,14 @@ export default function InboxPage() {
                                 }}
                                 onMouseEnter={(e) => {
                                   if (!isLoggingOutSession) {
-                                    e.currentTarget.style.background = 'rgba(237, 73, 86, 0.15)';
-                                    e.currentTarget.style.borderColor = 'rgba(237, 73, 86, 0.3)';
+                                    e.currentTarget.style.background = 'rgba(0, 168, 255, 0.22)';
+                                    e.currentTarget.style.borderColor = 'rgba(0, 168, 255, 0.4)';
                                   }
                                 }}
                                 onMouseLeave={(e) => {
                                   if (!isLoggingOutSession) {
-                                    e.currentTarget.style.background = 'rgba(237, 73, 86, 0.08)';
-                                    e.currentTarget.style.borderColor = 'rgba(237, 73, 86, 0.15)';
+                                    e.currentTarget.style.background = 'rgba(0, 168, 255, 0.12)';
+                                    e.currentTarget.style.borderColor = 'rgba(0, 168, 255, 0.25)';
                                   }
                                 }}
                               >
@@ -6740,17 +7485,1177 @@ export default function InboxPage() {
                     </div>
                   )}
                 </div>
+              ) : settingsTab === 'ai' ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', paddingBottom: '20px' }}>
+                  {/* Bilgi Kartı */}
+                  <div style={{
+                    background: 'rgba(56, 189, 248, 0.05)',
+                    border: '1px solid rgba(56, 189, 248, 0.15)',
+                    borderRadius: '16px',
+                    padding: '16px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '8px'
+                  }}>
+                    <h4 style={{ margin: 0, fontSize: '14px', fontWeight: '700', color: '#38bdf8', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      🤖 Yapay Zeka (AI) Asistanı
+                    </h4>
+                    <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.5' }}>
+                      Gelen Instagram DM'lerine OpenRouter üzerinden otomatik ve akıllı yanıtlar yazılmasını sağlar. 
+                      Bu asistan, <strong>insansı görüldü (seen) simulation</strong> tamamlandıktan sonra devreye girer; 
+                      önce görüldü atar, ardından 6-10 saniye boyunca "yazıyor..." ibaresini gösterir ve mesajı gönderir.
+                    </p>
+                  </div>
+
+                  {/* Asistan Aktif mi? */}
+                  <div style={{
+                    background: 'rgba(255, 255, 255, 0.02)',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    borderRadius: '12px',
+                    padding: '16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between'
+                  }}>
+                    <div>
+                      <h4 style={{ margin: 0, fontSize: '13px', fontWeight: '700', color: '#fff' }}>Asistanı Etkinleştir</h4>
+                      <p style={{ margin: '4px 0 0 0', fontSize: '11px', color: 'var(--text-muted)' }}>
+                        Aktif edildiğinde gelen doğrudan mesajlar yapay zeka tarafından cevaplanır (Sadece 1-1 sohbetler).
+                      </p>
+                    </div>
+                    <label style={{
+                      position: 'relative',
+                      display: 'inline-block',
+                      width: '46px',
+                      height: '24px',
+                      cursor: 'pointer'
+                    }}>
+                      <input 
+                        type="checkbox" 
+                        checked={autoSettings.ai_assistant_enabled}
+                        onChange={(e) => setAutoSettings({ ...autoSettings, ai_assistant_enabled: e.target.checked })}
+                        style={{ opacity: 0, width: 0, height: 0 }}
+                      />
+                      <span style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        borderRadius: '34px',
+                        transition: '0.3s',
+                        backgroundColor: autoSettings.ai_assistant_enabled ? '#38bdf8' : 'rgba(255, 255, 255, 0.1)'
+                      }}>
+                        <span style={{
+                          position: 'absolute',
+                          content: '""',
+                          height: '18px',
+                          width: '18px',
+                          left: '3px',
+                          bottom: '3px',
+                          backgroundColor: '#fff',
+                          borderRadius: '50%',
+                          transition: '0.3s',
+                          transform: autoSettings.ai_assistant_enabled ? 'translateX(22px)' : 'translateX(0)'
+                        }} />
+                      </span>
+                    </label>
+                  </div>
+
+                  {/* API Anahtarı ve Model */}
+                  <div style={{
+                    background: 'rgba(255, 255, 255, 0.02)',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    borderRadius: '12px',
+                    padding: '16px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '14px'
+                  }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#fff', marginBottom: '6px' }}>
+                        OpenRouter API Key
+                      </label>
+                      <input
+                        type="password"
+                        placeholder="sk-or-v1-..."
+                        value={autoSettings.ai_api_key}
+                        onChange={(e) => setAutoSettings({ ...autoSettings, ai_api_key: e.target.value })}
+                        style={{
+                          width: '100%',
+                          height: '38px',
+                          background: 'rgba(255, 255, 255, 0.02)',
+                          border: '1px solid rgba(255, 255, 255, 0.06)',
+                          borderRadius: '8px',
+                          color: '#fff',
+                          padding: '0 12px',
+                          fontSize: '12px',
+                          outline: 'none'
+                        }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#fff', marginBottom: '6px' }}>
+                        Model Kimliği (Model ID)
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="openrouter/free"
+                        value={autoSettings.ai_model}
+                        onChange={(e) => setAutoSettings({ ...autoSettings, ai_model: e.target.value })}
+                        style={{
+                          width: '100%',
+                          height: '38px',
+                          background: 'rgba(255, 255, 255, 0.02)',
+                          border: '1px solid rgba(255, 255, 255, 0.06)',
+                          borderRadius: '8px',
+                          color: '#fff',
+                          padding: '0 12px',
+                          fontSize: '12px',
+                          outline: 'none',
+                          fontFamily: 'monospace'
+                        }}
+                      />
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }}>
+                        {[
+                          { label: 'Otomatik Ücretsiz Model (Önerilen)', id: 'openrouter/free' },
+                          { label: 'Llama 3.3 70B (Ücretsiz)', id: 'meta-llama/llama-3.3-70b-instruct:free' },
+                          { label: 'Hermes 3 405B (En Zeki)', id: 'nousresearch/hermes-3-llama-3.1-405b:free' },
+                          { label: 'Llama 3.2 3B (Hızlı)', id: 'meta-llama/llama-3.2-3b-instruct:free' }
+                        ].map((m) => (
+                          <button
+                            key={m.id}
+                            type="button"
+                            onClick={() => setAutoSettings({ ...autoSettings, ai_model: m.id })}
+                            style={{
+                              background: autoSettings.ai_model === m.id ? 'rgba(56, 189, 248, 0.15)' : 'rgba(255, 255, 255, 0.04)',
+                              border: autoSettings.ai_model === m.id ? '1px solid #38bdf8' : '1px solid rgba(255, 255, 255, 0.06)',
+                              borderRadius: '6px',
+                              color: autoSettings.ai_model === m.id ? '#38bdf8' : 'var(--text-muted)',
+                              padding: '4px 8px',
+                              fontSize: '10px',
+                              cursor: 'pointer',
+                              transition: 'all 0.15s'
+                            }}
+                          >
+                            {m.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  {/* Yapay Zeka Yanıt Gecikmesi */}
+                  <div style={{
+                    background: 'rgba(255, 255, 255, 0.02)',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    borderRadius: '12px',
+                    padding: '16px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '10px'
+                  }}>
+                    <div>
+                      <label style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', fontWeight: '700', color: '#fff', marginBottom: '6px' }}>
+                        <span>Yapay Zeka Yanıt Gecikmesi (Saniye)</span>
+                        <span style={{ color: '#38bdf8', fontFamily: 'monospace' }}>{autoSettings.ai_delay_seconds} Saniye</span>
+                      </label>
+                      <input
+                        type="range"
+                        min="0"
+                        max="180"
+                        step="5"
+                        value={autoSettings.ai_delay_seconds}
+                        onChange={(e) => setAutoSettings({ ...autoSettings, ai_delay_seconds: Number(e.target.value) })}
+                        style={{
+                          width: '100%',
+                          accentColor: '#38bdf8',
+                          cursor: 'pointer'
+                        }}
+                      />
+                      <p style={{ margin: '6px 0 0 0', fontSize: '10.5px', color: 'var(--text-muted)', lineHeight: '1.4' }}>
+                        Mesaj geldikten sonra görüldü atıp AI cevabı yazılana kadar beklenecek süre. 
+                        <strong>Test için 10-20 saniye</strong>, normal kullanımda ise spam koruması için <strong>60 saniye veya daha yüksek</strong> önerilir.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Sistem Rolü */}
+                  <div style={{
+                    background: 'rgba(255, 255, 255, 0.02)',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    borderRadius: '12px',
+                    padding: '16px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '6px'
+                  }}>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#fff' }}>
+                      Asistan Rolü ve Talimatları (System Prompt)
+                    </label>
+                    <p style={{ margin: '0 0 8px 0', fontSize: '10.5px', color: 'var(--text-muted)', lineHeight: '1.4' }}>
+                      Yapay zekanın üyelerle nasıl konuşacağını belirleyin. Ne söylemesi (veya söylememesi) gerektiğini buraya yazın.
+                    </p>
+                    <textarea
+                      value={autoSettings.ai_system_prompt}
+                      onChange={(e) => setAutoSettings({ ...autoSettings, ai_system_prompt: e.target.value })}
+                      placeholder="Örn: Sen bir Instagram grup otomasyon asistanısın..."
+                      style={{
+                        width: '100%',
+                        height: '110px',
+                        background: 'rgba(255, 255, 255, 0.02)',
+                        border: '1px solid rgba(255, 255, 255, 0.06)',
+                        borderRadius: '8px',
+                        color: '#fff',
+                        padding: '10px',
+                        fontSize: '12px',
+                        lineHeight: '1.4',
+                        outline: 'none',
+                        resize: 'vertical'
+                      }}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', paddingBottom: '20px' }}>
+                  
+                  {/* 1. Main Toggle & Status */}
+                  <div style={{
+                    background: 'rgba(255, 255, 255, 0.02)',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    borderRadius: '12px',
+                    padding: '16px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '12px'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div>
+                        <h4 style={{ margin: 0, fontSize: '14px', fontWeight: '700', color: '#fff' }}>Otomasyonu Etkinleştir</h4>
+                        <p style={{ margin: '4px 0 0 0', fontSize: '11px', color: 'var(--text-muted)' }}>
+                          Etkinleştirilmediği sürece zamanlanmış arka plan görevleri çalışmaz.
+                        </p>
+                      </div>
+                      <label style={{
+                        position: 'relative',
+                        display: 'inline-block',
+                        width: '46px',
+                        height: '24px',
+                        cursor: 'pointer'
+                      }}>
+                        <input 
+                          type="checkbox" 
+                          checked={autoSettings.enabled}
+                          onChange={(e) => {
+                            const newEnabled = e.target.checked;
+                            setAutoSettings(prev => ({ ...prev, enabled: newEnabled }));
+                            handleSaveAutomationSettings({ ...autoSettings, enabled: newEnabled });
+                          }}
+                          style={{ opacity: 0, width: 0, height: 0 }}
+                        />
+                        <span style={{
+                          position: 'absolute',
+                          top: 0, left: 0, right: 0, bottom: 0,
+                          backgroundColor: autoSettings.enabled ? 'var(--accent-color)' : 'rgba(255, 255, 255, 0.1)',
+                          transition: '.3s',
+                          borderRadius: '24px'
+                        }}>
+                          <span style={{
+                            position: 'absolute',
+                            content: '""',
+                            height: '18px',
+                            width: '18px',
+                            left: '3px',
+                            bottom: '3px',
+                            backgroundColor: 'white',
+                            transition: '.3s',
+                            borderRadius: '50%',
+                            transform: autoSettings.enabled ? 'translateX(22px)' : 'translateX(0)'
+                          }} />
+                        </span>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* 2. Automatic Actions Card */}
+                  <div style={{
+                    background: 'rgba(255, 255, 255, 0.02)',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    borderRadius: '12px',
+                    padding: '16px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '12px'
+                  }}>
+                    <h5 style={{ margin: 0, fontSize: '12px', fontWeight: '700', color: 'var(--accent-color)' }}>OTOMATİK EYLEMLER</h5>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#fff', cursor: 'pointer' }}>
+                      <input 
+                        type="checkbox"
+                        checked={autoSettings.auto_dm_enabled}
+                        onChange={(e) => setAutoSettings(prev => ({ ...prev, auto_dm_enabled: e.target.checked }))}
+                      />
+                      Eksiklere Otomatik DM At
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#fff', cursor: 'pointer' }}>
+                      <input 
+                        type="checkbox"
+                        checked={autoSettings.auto_group_report_enabled}
+                        onChange={(e) => setAutoSettings(prev => ({ ...prev, auto_group_report_enabled: e.target.checked }))}
+                      />
+                      Gruba Eksikler Listesini At
+                    </label>
+                  </div>
+
+                  {/* Öncelikli Paylaşım Yapan Üye Seçimi */}
+                  <div style={{
+                    background: 'rgba(255, 255, 255, 0.02)',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    borderRadius: '12px',
+                    padding: '16px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '12px'
+                  }}>
+                    <h5 style={{ margin: 0, fontSize: '12px', fontWeight: '700', color: 'var(--accent-color)' }}>ÖNCELİKLİ PAYLAŞIM YAPAN ÜYE (OPSİYONEL)</h5>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <input 
+                        type="text"
+                        placeholder="Örn: kullanıcı_adı"
+                        value={autoSettings.target_username}
+                        onChange={(e) => setAutoSettings(prev => ({ ...prev, target_username: e.target.value }))}
+                        style={{
+                          background: 'rgba(255, 255, 255, 0.05)',
+                          border: '1px solid rgba(255, 255, 255, 0.1)',
+                          borderRadius: '8px',
+                          padding: '8px 12px',
+                          color: '#fff',
+                          fontSize: '13px'
+                        }}
+                      />
+                      <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
+                        Eğer bu üye belirlenen günde paylaşım yaptıysa, tarama için öncelikle onun paylaşımı seçilir.
+                      </span>
+                    </div>
+                  </div>
+                  {/* Muaf Tutulacak Sabit Kişiler */}
+                  <div style={{
+                    background: 'rgba(255, 255, 255, 0.02)',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    borderRadius: '12px',
+                    padding: '16px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '12px'
+                  }}>
+                    <h5 style={{ margin: 0, fontSize: '12px', fontWeight: '700', color: 'var(--accent-color)' }}>MUAF TUTULACAK SABİT ÜYELER (OPSİYONEL)</h5>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <input 
+                        type="text"
+                        placeholder="Örn: muaf_kullanici1, muaf_kullanici2"
+                        value={autoSettings.exempt_usernames}
+                        onChange={(e) => setAutoSettings(prev => ({ ...prev, exempt_usernames: e.target.value }))}
+                        style={{
+                          background: 'rgba(255, 255, 255, 0.05)',
+                          border: '1px solid rgba(255, 255, 255, 0.1)',
+                          borderRadius: '8px',
+                          padding: '8px 12px',
+                          color: '#fff',
+                          fontSize: '13px'
+                        }}
+                      />
+                      <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
+                        Virgülle ayırarak muaf tutmak istediğiniz kullanıcı adlarını yazın. Bu kullanıcılar eksik kontrollerinde taranmaz ve uyarılmaz.
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Tarama Tarihi Seçimi (Dün / Bugün) */}
+                  <div style={{
+                    background: 'rgba(255, 255, 255, 0.02)',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    borderRadius: '12px',
+                    padding: '16px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '12px'
+                  }}>
+                    <h5 style={{ margin: 0, fontSize: '12px', fontWeight: '700', color: 'var(--accent-color)' }}>TARAMA YAPILACAK TARİH (DÜN / BUGÜN)</h5>
+                    <div style={{ display: 'flex', gap: '24px' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#fff', cursor: 'pointer' }}>
+                        <input 
+                          type="radio" 
+                          name="scan_date" 
+                          value="yesterday"
+                          checked={autoSettings.scan_date === 'yesterday'}
+                          onChange={() => setAutoSettings(prev => ({ ...prev, scan_date: 'yesterday' }))}
+                        />
+                        Dünün Paylaşımlarını Denetle
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#fff', cursor: 'pointer' }}>
+                        <input 
+                          type="radio" 
+                          name="scan_date" 
+                          value="today"
+                          checked={autoSettings.scan_date === 'today'}
+                          onChange={() => setAutoSettings(prev => ({ ...prev, scan_date: 'today' }))}
+                        />
+                        Bugünün Paylaşımlarını Denetle
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* 3. Scheduling Times (GMT+3 Turkey Time) */}
+                  <div style={{
+                    background: 'rgba(255, 255, 255, 0.02)',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    borderRadius: '12px',
+                    padding: '16px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '12px'
+                  }}>
+                    <h5 style={{ margin: 0, fontSize: '12px', fontWeight: '700', color: 'var(--accent-color)' }}>
+                      TARAMA SAATLERİ (GMT+3 TÜRKİYE SAATİ)
+                    </h5>
+                    <div style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(4, 1fr)',
+                      gap: '10px'
+                    }}>
+                      {autoSettings.check_hours.map((hour, idx) => (
+                        <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{idx + 1}. Saat</span>
+                          <input 
+                            type="time"
+                            value={hour}
+                            onChange={(e) => {
+                              const newHours = [...autoSettings.check_hours];
+                              newHours[idx] = e.target.value;
+                              setAutoSettings(prev => ({ ...prev, check_hours: newHours }));
+                            }}
+                            style={{
+                              background: 'rgba(255, 255, 255, 0.05)',
+                              border: '1px solid rgba(255, 255, 255, 0.1)',
+                              borderRadius: '8px',
+                              padding: '8px',
+                              color: '#fff',
+                              fontSize: '13px',
+                              textAlign: 'center'
+                            }}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 4. Delays and Cooldowns settings */}
+                  <div style={{
+                    background: 'rgba(255, 255, 255, 0.02)',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    borderRadius: '12px',
+                    padding: '16px',
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1fr',
+                    gap: '16px'
+                  }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--accent-color)' }}>
+                        GRUP MOLA SÜRESİ (DAKİKA)
+                      </label>
+                      <input 
+                        type="number"
+                        min="1"
+                        max="60"
+                        value={autoSettings.break_minutes}
+                        onChange={(e) => setAutoSettings(prev => ({ ...prev, break_minutes: parseInt(e.target.value) || 5 }))}
+                        style={{
+                          background: 'rgba(255, 255, 255, 0.05)',
+                          border: '1px solid rgba(255, 255, 255, 0.1)',
+                          borderRadius: '8px',
+                          padding: '8px',
+                          color: '#fff',
+                          fontSize: '13px'
+                        }}
+                      />
+                      <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Grup taramaları arası mola (4-5 dk önerilir).</span>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--accent-color)' }}>
+                        DM GÖNDERİM ARALIĞI (SANİYE)
+                      </label>
+                      <input 
+                        type="number"
+                        min="5"
+                        max="300"
+                        value={autoSettings.dm_delay_seconds}
+                        onChange={(e) => setAutoSettings(prev => ({ ...prev, dm_delay_seconds: parseInt(e.target.value) || 30 }))}
+                        style={{
+                          background: 'rgba(255, 255, 255, 0.05)',
+                          border: '1px solid rgba(255, 255, 255, 0.1)',
+                          borderRadius: '8px',
+                          padding: '8px',
+                          color: '#fff',
+                          fontSize: '13px'
+                        }}
+                      />
+                      <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Spama düşmemek için her DM arası gecikme.</span>
+                    </div>
+                  </div>
+
+                  {/* 5. Group Thread Selection */}
+                  <div style={{
+                    background: 'rgba(255, 255, 255, 0.02)',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    borderRadius: '12px',
+                    padding: '16px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '10px'
+                  }}>
+                    <h5 style={{ margin: 0, fontSize: '12px', fontWeight: '700', color: 'var(--accent-color)' }}>
+                      OTOMASYONUN AKTİF OLACAĞI GRUPLAR
+                    </h5>
+                    <div style={{
+                      maxHeight: '220px',
+                      overflowY: 'auto',
+                      border: '1px solid rgba(255, 255, 255, 0.06)',
+                      borderRadius: '8px',
+                      padding: '8px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '8px',
+                      background: 'rgba(0,0,0,0.1)'
+                    }}>
+                      {threads.filter(t => t.is_group || t.thread_title).length === 0 ? (
+                        <div style={{ fontSize: '12px', color: 'var(--text-muted)', textAlign: 'center', padding: '12px' }}>
+                          Hiçbir grup sohbeti bulunamadı.
+                        </div>
+                      ) : (
+                        threads.filter(t => t.is_group || t.thread_title).map(thread => {
+                          const isThreadActive = autoSettings.threads.includes(thread.id);
+                          const threadCfg = autoSettings.threads_config[thread.id] || { comment_check_enabled: true, like_check_enabled: true, admin_report_enabled: false, admin_username: '', scan_mode: 'all' };
+                          
+                          return (
+                            <div 
+                              key={thread.id}
+                              style={{
+                                display: 'flex',
+                                flexDirection: 'column',
+                                padding: '12px 14px',
+                                borderRadius: '10px',
+                                background: isThreadActive ? 'rgba(255, 255, 255, 0.02)' : 'transparent',
+                                border: '1px solid ' + (isThreadActive ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.03)'),
+                                gap: '10px',
+                                transition: 'all 0.2s ease-in-out'
+                              }}
+                            >
+                              {/* Main Row: Group Title & Checkbox */}
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px', color: '#fff', cursor: 'pointer', flex: 1, minWidth: 0 }}>
+                                  <input 
+                                    type="checkbox"
+                                    checked={isThreadActive}
+                                    onChange={(e) => {
+                                      const checked = e.target.checked;
+                                      setAutoSettings(prev => {
+                                        const list = [...prev.threads];
+                                        if (checked) {
+                                          if (!list.includes(thread.id)) list.push(thread.id);
+                                        } else {
+                                          const idx = list.indexOf(thread.id);
+                                          if (idx !== -1) list.splice(idx, 1);
+                                        }
+                                        return { ...prev, threads: list };
+                                      });
+                                    }}
+                                    style={{
+                                      cursor: 'pointer',
+                                      width: '15px',
+                                      height: '15px',
+                                      accentColor: 'var(--accent-color)'
+                                    }}
+                                  />
+                                  <span style={{ 
+                                    fontWeight: isThreadActive ? '600' : 'normal', 
+                                    color: isThreadActive ? '#fff' : 'rgba(255, 255, 255, 0.7)',
+                                    fontSize: '13.5px',
+                                    whiteSpace: 'nowrap',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis'
+                                  }}>
+                                    {thread.thread_title || 'İsimsiz Grup'}
+                                  </span>
+                                </label>
+                                
+                                {isThreadActive && (
+                                  <span style={{
+                                    fontSize: '10px',
+                                    padding: '3px 8px',
+                                    borderRadius: '20px',
+                                    background: 'rgba(0, 168, 255, 0.1)',
+                                    color: 'var(--accent-color)',
+                                    fontWeight: '600',
+                                    border: '1px solid rgba(0, 168, 255, 0.2)'
+                                  }}>
+                                    Aktif
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Expanded Sub-panel with Settings */}
+                              {isThreadActive && (
+                                <div style={{
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  gap: '10px',
+                                  paddingLeft: '25px',
+                                  borderLeft: '2px solid rgba(255, 255, 255, 0.08)',
+                                  marginTop: '2px',
+                                  paddingBottom: '4px'
+                                }}>
+                                  
+                                  {/* Row 1: Checkbox selections (Yorum, Beğeni) + Scan Mode dropdown */}
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                      <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: 'rgba(255,255,255,0.6)', cursor: 'pointer' }}>
+                                        <input 
+                                          type="checkbox"
+                                          checked={threadCfg.comment_check_enabled}
+                                          onChange={(e) => {
+                                            const val = e.target.checked;
+                                            setAutoSettings(prev => {
+                                              const nextConfigs = { ...prev.threads_config };
+                                              const current = nextConfigs[thread.id] || { comment_check_enabled: true, like_check_enabled: true, admin_report_enabled: false, admin_username: '', scan_mode: 'all' };
+                                              nextConfigs[thread.id] = { ...current, comment_check_enabled: val };
+                                              return { ...prev, threads_config: nextConfigs };
+                                            });
+                                          }}
+                                          style={{ accentColor: 'var(--accent-color)' }}
+                                        />
+                                        Yorum Kontrolü
+                                      </label>
+                                      <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: 'rgba(255,255,255,0.6)', cursor: 'pointer' }}>
+                                        <input 
+                                          type="checkbox"
+                                          checked={threadCfg.like_check_enabled}
+                                          onChange={(e) => {
+                                            const val = e.target.checked;
+                                            setAutoSettings(prev => {
+                                              const nextConfigs = { ...prev.threads_config };
+                                              const current = nextConfigs[thread.id] || { comment_check_enabled: true, like_check_enabled: true, admin_report_enabled: false, admin_username: '', scan_mode: 'all' };
+                                              nextConfigs[thread.id] = { ...current, like_check_enabled: val };
+                                              return { ...prev, threads_config: nextConfigs };
+                                            });
+                                          }}
+                                          style={{ accentColor: 'var(--accent-color)' }}
+                                        />
+                                        Beğeni Kontrolü
+                                      </label>
+                                    </div>
+
+                                    {/* Scan Mode Dropdown */}
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                      <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.4)', fontWeight: '600' }}>MOD:</span>
+                                      <select
+                                        value={threadCfg.scan_mode || 'all'}
+                                        onChange={(e) => {
+                                          const val = e.target.value;
+                                          setAutoSettings(prev => {
+                                            const nextConfigs = { ...prev.threads_config };
+                                            const current = nextConfigs[thread.id] || { comment_check_enabled: true, like_check_enabled: true, admin_report_enabled: false, admin_username: '', scan_mode: 'all' };
+                                            nextConfigs[thread.id] = { ...current, scan_mode: val };
+                                            return { ...prev, threads_config: nextConfigs };
+                                          });
+                                        }}
+                                        style={{
+                                          background: 'rgba(255, 255, 255, 0.05)',
+                                          border: '1px solid rgba(255, 255, 255, 0.1)',
+                                          borderRadius: '6px',
+                                          color: '#fff',
+                                          fontSize: '11px',
+                                          padding: '3px 8px',
+                                          outline: 'none',
+                                          cursor: 'pointer'
+                                        }}
+                                      >
+                                        <option value="all" style={{ background: '#1c1c1e', color: '#fff' }}>Tüm Üyeler</option>
+                                        <option value="participation" style={{ background: '#1c1c1e', color: '#fff' }}>Sadece Katılım</option>
+                                      </select>
+                                    </div>
+                                  </div>
+
+                                  {/* Row 2: Admin Report settings */}
+                                  <div style={{ 
+                                    display: 'flex', 
+                                    alignItems: 'center', 
+                                    gap: '8px', 
+                                    borderTop: '1px solid rgba(255,255,255,0.04)', 
+                                    paddingTop: '8px',
+                                    flexWrap: 'wrap'
+                                  }}>
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: 'rgba(255,255,255,0.6)', cursor: 'pointer' }}>
+                                      <input 
+                                        type="checkbox"
+                                        checked={!!threadCfg.admin_report_enabled}
+                                        onChange={(e) => {
+                                          const val = e.target.checked;
+                                          setAutoSettings(prev => {
+                                            const nextConfigs = { ...prev.threads_config };
+                                            const current = nextConfigs[thread.id] || { comment_check_enabled: true, like_check_enabled: true, admin_report_enabled: false, admin_username: '', scan_mode: 'all' };
+                                            nextConfigs[thread.id] = { ...current, admin_report_enabled: val };
+                                            return { ...prev, threads_config: nextConfigs };
+                                          });
+                                        }}
+                                        style={{ accentColor: 'var(--accent-color)' }}
+                                      />
+                                      Admine Raporla
+                                    </label>
+                                    {threadCfg.admin_report_enabled && (
+                                      <input 
+                                        type="text"
+                                        placeholder="@admin_kullanici_adi"
+                                        value={threadCfg.admin_username || ''}
+                                        onChange={(e) => {
+                                          const val = e.target.value;
+                                          setAutoSettings(prev => {
+                                            const nextConfigs = { ...prev.threads_config };
+                                            const current = nextConfigs[thread.id] || { comment_check_enabled: true, like_check_enabled: true, admin_report_enabled: false, admin_username: '', scan_mode: 'all' };
+                                            nextConfigs[thread.id] = { ...current, admin_username: val };
+                                            return { ...prev, threads_config: nextConfigs };
+                                          });
+                                        }}
+                                        style={{
+                                          background: 'rgba(255, 255, 255, 0.05)',
+                                          border: '1px solid rgba(255, 255, 255, 0.1)',
+                                          borderRadius: '6px',
+                                          padding: '3px 8px',
+                                          color: '#fff',
+                                          fontSize: '11px',
+                                          width: '140px',
+                                          outline: 'none'
+                                        }}
+                                      />
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 6. Message Templates */}
+                  <div style={{
+                    background: 'rgba(255, 255, 255, 0.02)',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    borderRadius: '12px',
+                    padding: '16px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '14px'
+                  }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--accent-color)' }}>
+                        EKSİKLERE ATILACAK DM KALIBI
+                      </label>
+                      <textarea
+                        rows={3}
+                        value={autoSettings.dm_template}
+                        onChange={(e) => setAutoSettings(prev => ({ ...prev, dm_template: e.target.value }))}
+                        placeholder="Merhaba @{username}, paylaşılan gönderiye beğeni/yorumlarınızı rica ederiz: {link}"
+                        style={{
+                          background: 'rgba(255, 255, 255, 0.05)',
+                          border: '1px solid rgba(255, 255, 255, 0.1)',
+                          borderRadius: '8px',
+                          padding: '10px',
+                          color: '#fff',
+                          fontSize: '13px',
+                          resize: 'vertical',
+                          fontFamily: 'inherit'
+                        }}
+                      />
+                      <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
+                        Değişkenler: <strong>{"{username}"}</strong> (kullanıcı adı), <strong>{"{link}"}</strong> (gönderi linki), <strong>{"{grup_ismi}"}</strong> (grup adı).
+                      </span>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--accent-color)' }}>
+                        EKSİĞİ %50'DEN FAZLA OLANLARA ATILACAK DM KALIBI (LİNK OLMADAN)
+                      </label>
+                      <textarea
+                        rows={2}
+                        value={autoSettings.dm_bulk_template}
+                        onChange={(e) => setAutoSettings(prev => ({ ...prev, dm_bulk_template: e.target.value }))}
+                        placeholder="Merhaba {grup_ismi} grubunda eksiğiniz var dönüş yapmanız gerekiyor"
+                        style={{
+                          background: 'rgba(255, 255, 255, 0.05)',
+                          border: '1px solid rgba(255, 255, 255, 0.1)',
+                          borderRadius: '8px',
+                          padding: '10px',
+                          color: '#fff',
+                          fontSize: '13px',
+                          resize: 'vertical',
+                          fontFamily: 'inherit'
+                        }}
+                      />
+                      <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
+                        Değişkenler: <strong>{"{username}"}</strong>, <strong>{"{grup_ismi}"}</strong> (grup adı). Bu mesaj, eksik oranı %50'den fazla olan üyelere link listesi yerine tek parça gönderilir.
+                      </span>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--accent-color)' }}>
+                        GRUBA GÖNDERİLECEK EKSİK LİSTESİ KALIBI
+                      </label>
+                      <textarea
+                        rows={3}
+                        value={autoSettings.group_report_template}
+                        onChange={(e) => setAutoSettings(prev => ({ ...prev, group_report_template: e.target.value }))}
+                        placeholder="Beğeni/Yorum yapmayan üyeler:\n{missing_users}"
+                        style={{
+                          background: 'rgba(255, 255, 255, 0.05)',
+                          border: '1px solid rgba(255, 255, 255, 0.1)',
+                          borderRadius: '8px',
+                          padding: '10px',
+                          color: '#fff',
+                          fontSize: '13px',
+                          resize: 'vertical',
+                          fontFamily: 'inherit'
+                        }}
+                      />
+                      <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
+                        Değişkenler: <strong>{"{missing_users}"}</strong> (etiketlenmiş eksik üyeler).
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* 7. Trigger Now Panel */}
+                  <div style={{
+                    background: 'rgba(255, 255, 255, 0.02)',
+                    border: '1px solid rgba(255, 255, 255, 0.06)',
+                    borderRadius: '12px',
+                    padding: '16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    marginTop: '16px'
+                  }}>
+                    <div>
+                      <h4 style={{ margin: 0, fontSize: '13px', fontWeight: '700', color: '#fff' }}>Test Taraması Başlat</h4>
+                      <p style={{ margin: '4px 0 0 0', fontSize: '11px', color: 'rgba(255,255,255,0.5)' }}>
+                        Zamanlama saatini beklemeden otomasyon kontrolünü şu an manuel tetikler.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleTriggerAutomationManual}
+                      disabled={isTriggeringAutomation || !autoSettings.enabled}
+                      style={{
+                        background: 'rgba(0, 168, 255, 0.12)',
+                        border: '1px solid rgba(0, 168, 255, 0.25)',
+                        color: '#38bdf8',
+                        fontSize: '12px',
+                        fontWeight: '700',
+                        padding: '10px 16px',
+                        borderRadius: '8px',
+                        cursor: (!autoSettings.enabled || isTriggeringAutomation) ? 'not-allowed' : 'pointer',
+                        opacity: (!autoSettings.enabled || isTriggeringAutomation) ? 0.6 : 1,
+                        transition: 'all 0.2s'
+                      }}
+                      onMouseEnter={(e) => {
+                        if (autoSettings.enabled && !isTriggeringAutomation) {
+                          e.currentTarget.style.background = 'rgba(0, 168, 255, 0.22)';
+                          e.currentTarget.style.borderColor = 'rgba(0, 168, 255, 0.4)';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (autoSettings.enabled && !isTriggeringAutomation) {
+                          e.currentTarget.style.background = 'rgba(0, 168, 255, 0.12)';
+                          e.currentTarget.style.borderColor = 'rgba(0, 168, 255, 0.25)';
+                        }
+                      }}
+                    >
+                      {isTriggeringAutomation ? 'Başlatılıyor...' : 'Şimdi Çalıştır'}
+                    </button>
+                  </div>
+
+                  {/* 8. Reset States Panel */}
+                  <div style={{
+                    background: 'rgba(255, 255, 255, 0.02)',
+                    border: '1px solid rgba(255, 255, 255, 0.06)',
+                    borderRadius: '12px',
+                    padding: '16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    marginTop: '16px',
+                    marginBottom: '16px'
+                  }}>
+                    <div>
+                      <h4 style={{ margin: 0, fontSize: '13px', fontWeight: '700', color: '#fff' }}>Otomasyon Hareketlerini Sıfırla</h4>
+                      <p style={{ margin: '4px 0 0 0', fontSize: '11px', color: 'rgba(255,255,255,0.5)' }}>
+                        Kilitli gönderileri, dünün DM gönderim kayıtlarını ve log geçmişini temizler.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleResetAutomation}
+                      disabled={isResettingAutomation}
+                      style={{
+                        background: 'rgba(0, 168, 255, 0.12)',
+                        border: '1px solid rgba(0, 168, 255, 0.25)',
+                        color: '#38bdf8',
+                        fontSize: '12px',
+                        fontWeight: '700',
+                        padding: '10px 16px',
+                        borderRadius: '8px',
+                        cursor: isResettingAutomation ? 'not-allowed' : 'pointer',
+                        opacity: isResettingAutomation ? 0.6 : 1,
+                        transition: 'all 0.2s'
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!isResettingAutomation) {
+                          e.currentTarget.style.background = 'rgba(0, 168, 255, 0.22)';
+                          e.currentTarget.style.borderColor = 'rgba(0, 168, 255, 0.4)';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!isResettingAutomation) {
+                          e.currentTarget.style.background = 'rgba(0, 168, 255, 0.12)';
+                          e.currentTarget.style.borderColor = 'rgba(0, 168, 255, 0.25)';
+                        }
+                      }}
+                    >
+                      {isResettingAutomation ? 'Sıfırlanıyor...' : 'Geçmişi Sıfırla'}
+                    </button>
+                  </div>
+
+                  {/* 8b. Undo Actions Panel */}
+                  <div style={{
+                    background: 'rgba(255, 255, 255, 0.02)',
+                    border: '1px solid rgba(255, 255, 255, 0.06)',
+                    borderRadius: '12px',
+                    padding: '16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    marginTop: '16px',
+                    marginBottom: '16px'
+                  }}>
+                    <div>
+                      <h4 style={{ margin: 0, fontSize: '13px', fontWeight: '700', color: '#fff' }}>Son İşlemleri Geri Al (Mesajları Sil)</h4>
+                      <p style={{ margin: '4px 0 0 0', fontSize: '11px', color: 'rgba(255,255,255,0.5)' }}>
+                        Son çalışmada gönderilen tüm DM linklerini, uyarıları ve grup raporunu karşı taraftan geri alır (mesajları siler).
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleUndoAutomation}
+                      disabled={isUndoingAutomation}
+                      style={{
+                        background: 'rgba(0, 168, 255, 0.12)',
+                        border: '1px solid rgba(0, 168, 255, 0.25)',
+                        color: '#38bdf8',
+                        fontSize: '12px',
+                        fontWeight: '700',
+                        padding: '10px 16px',
+                        borderRadius: '8px',
+                        cursor: isUndoingAutomation ? 'not-allowed' : 'pointer',
+                        opacity: isUndoingAutomation ? 0.6 : 1,
+                        transition: 'all 0.2s'
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!isUndoingAutomation) {
+                          e.currentTarget.style.background = 'rgba(0, 168, 255, 0.22)';
+                          e.currentTarget.style.borderColor = 'rgba(0, 168, 255, 0.4)';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!isUndoingAutomation) {
+                          e.currentTarget.style.background = 'rgba(0, 168, 255, 0.12)';
+                          e.currentTarget.style.borderColor = 'rgba(0, 168, 255, 0.25)';
+                        }
+                      }}
+                    >
+                      {isUndoingAutomation ? 'Geri Alınıyor...' : 'İşlemleri Geri Al'}
+                    </button>
+                  </div>
+
+                  {/* 9. Execution Logs List */}
+                  <div style={{
+                    background: 'rgba(255, 255, 255, 0.02)',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    borderRadius: '12px',
+                    padding: '16px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '10px'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <h5 style={{ margin: 0, fontSize: '12px', fontWeight: '700', color: 'var(--accent-color)' }}>
+                        OTOMASYON HAREKET LOGLARI (SON 100)
+                      </h5>
+                      <button
+                        type="button"
+                        onClick={fetchAutomationLogs}
+                        disabled={isLogsLoading}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: '#0095f6',
+                          fontSize: '11px',
+                          fontWeight: '700',
+                          cursor: 'pointer',
+                          padding: '2px 6px'
+                        }}
+                      >
+                        {isLogsLoading ? 'Güncelleniyor...' : 'Yenile'}
+                      </button>
+                    </div>
+
+                    <div style={{
+                      maxHeight: '260px',
+                      overflowY: 'auto',
+                      border: '1px solid rgba(255, 255, 255, 0.08)',
+                      borderRadius: '12px',
+                      background: 'rgba(0, 0, 0, 0.25)',
+                      padding: '12px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '8px',
+                      boxShadow: 'inset 0 2px 8px rgba(0,0,0,0.2)'
+                    }}>
+                      {automationLogs.length === 0 ? (
+                        <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '12px' }}>
+                          Henüz hiçbir hareket logu bulunmuyor.
+                        </div>
+                      ) : (
+                        automationLogs.map((log: any) => {
+                          let badgeBg = 'rgba(0, 168, 255, 0.1)';
+                          let badgeBorder = 'rgba(0, 168, 255, 0.2)';
+                          let badgeColor = '#38bdf8';
+                          let badgeIcon = 'ℹ';
+                          let messageColor = 'rgba(255, 255, 255, 0.8)';
+
+                          if (log.type === 'success') {
+                            badgeIcon = '✓';
+                          } else if (log.type === 'warning') {
+                            badgeIcon = '⚠';
+                          } else if (log.type === 'error') {
+                            badgeIcon = '✗';
+                          } else if (log.type === 'info') {
+                            badgeIcon = 'ℹ';
+                          }
+
+                          let formattedTime = '';
+                          try {
+                            formattedTime = new Date(log.timestamp).toLocaleString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                          } catch (e) {
+                            formattedTime = String(log.timestamp).split(' ')[1] || '';
+                          }
+
+                          return (
+                            <div 
+                              key={log.id} 
+                              style={{ 
+                                display: 'flex', 
+                                alignItems: 'flex-start',
+                                justifyContent: 'space-between',
+                                gap: '12px', 
+                                padding: '8px 10px',
+                                borderRadius: '8px',
+                                background: 'rgba(255, 255, 255, 0.02)',
+                                border: '1px solid rgba(255, 255, 255, 0.04)',
+                                transition: 'all 0.15s ease'
+                              }}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)';
+                                e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.08)';
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.02)';
+                                e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.04)';
+                              }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', flex: 1, minWidth: 0 }}>
+                                <div style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  width: '20px',
+                                  height: '20px',
+                                  borderRadius: '6px',
+                                  fontSize: '11px',
+                                  fontWeight: 'bold',
+                                  flexShrink: 0,
+                                  background: badgeBg,
+                                  border: '1px solid ' + badgeBorder,
+                                  color: badgeColor
+                                }}>
+                                  {badgeIcon}
+                                </div>
+                                <span style={{ 
+                                  color: messageColor, 
+                                  fontSize: '12px',
+                                  lineHeight: '1.4',
+                                  wordBreak: 'break-word',
+                                  fontFamily: 'system-ui, -apple-system, sans-serif'
+                                }}>
+                                  {log.message}
+                                </span>
+                              </div>
+                              <span style={{ 
+                                color: 'rgba(255,255,255,0.3)', 
+                                fontSize: '10.5px',
+                                fontFamily: 'monospace',
+                                flexShrink: 0,
+                                marginTop: '2px'
+                              }}>
+                                {formattedTime}
+                              </span>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+
+                </div>
               )}
             </div>
 
-            <footer className="modal-footer">
+            <footer className="modal-footer" style={{ display: 'flex', gap: '8px', padding: '16px' }}>
               {settingsTab === 'settings' ? (
                 <>
                   <button 
                     type="button" 
                     className="header-btn" 
-                    style={{ marginRight: 'auto' }}
+                    style={{ 
+                      background: 'rgba(0, 168, 255, 0.12)',
+                      border: '1px solid rgba(0, 168, 255, 0.25)',
+                      color: '#38bdf8',
+                      fontSize: '12px',
+                      fontWeight: '700',
+                      padding: '8px 16px',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s',
+                      outline: 'none',
+                      marginRight: 'auto'
+                    }}
                     onClick={handleResetSettings}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = 'rgba(0, 168, 255, 0.22)';
+                      e.currentTarget.style.borderColor = 'rgba(0, 168, 255, 0.4)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'rgba(0, 168, 255, 0.12)';
+                      e.currentTarget.style.borderColor = 'rgba(0, 168, 255, 0.25)';
+                    }}
                   >
                     Sıfırla
                   </button>
@@ -6759,11 +8664,26 @@ export default function InboxPage() {
                     type="button" 
                     className="header-btn"
                     style={{ 
-                      backgroundColor: 'rgba(237, 73, 86, 0.1)', 
-                      color: '#ff858d', 
-                      border: '1px solid rgba(237, 73, 86, 0.2)' 
+                      background: 'rgba(0, 168, 255, 0.12)',
+                      border: '1px solid rgba(0, 168, 255, 0.25)',
+                      color: '#38bdf8',
+                      fontSize: '12px',
+                      fontWeight: '700',
+                      padding: '8px 16px',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s',
+                      outline: 'none'
                     }}
                     onClick={handleLogout}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = 'rgba(0, 168, 255, 0.22)';
+                      e.currentTarget.style.borderColor = 'rgba(0, 168, 255, 0.4)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'rgba(0, 168, 255, 0.12)';
+                      e.currentTarget.style.borderColor = 'rgba(0, 168, 255, 0.25)';
+                    }}
                   >
                     Çıkış Yap
                   </button>
@@ -6771,7 +8691,27 @@ export default function InboxPage() {
                   <button 
                     type="button" 
                     className="header-btn" 
+                    style={{ 
+                      background: 'rgba(0, 168, 255, 0.12)',
+                      border: '1px solid rgba(0, 168, 255, 0.25)',
+                      color: '#38bdf8',
+                      fontSize: '12px',
+                      fontWeight: '700',
+                      padding: '8px 16px',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s',
+                      outline: 'none'
+                    }}
                     onClick={() => setIsSettingsOpen(false)}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = 'rgba(0, 168, 255, 0.22)';
+                      e.currentTarget.style.borderColor = 'rgba(0, 168, 255, 0.4)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'rgba(0, 168, 255, 0.12)';
+                      e.currentTarget.style.borderColor = 'rgba(0, 168, 255, 0.25)';
+                    }}
                   >
                     İptal
                   </button>
@@ -6780,26 +8720,185 @@ export default function InboxPage() {
                     type="submit" 
                     form="settings-form" 
                     className="header-btn primary"
+                    style={{ 
+                      background: 'rgba(0, 168, 255, 0.12)',
+                      border: '1px solid rgba(0, 168, 255, 0.25)',
+                      color: '#38bdf8',
+                      fontSize: '12px',
+                      fontWeight: '700',
+                      padding: '8px 16px',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s',
+                      outline: 'none'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = 'rgba(0, 168, 255, 0.22)';
+                      e.currentTarget.style.borderColor = 'rgba(0, 168, 255, 0.4)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'rgba(0, 168, 255, 0.12)';
+                      e.currentTarget.style.borderColor = 'rgba(0, 168, 255, 0.25)';
+                    }}
                   >
                     Kaydet
                   </button>
                 </>
-              ) : (
+              ) : settingsTab === 'activities' ? (
                 <>
                   <button
                     type="button"
                     className="header-btn"
-                    style={{ marginRight: 'auto' }}
+                    style={{ 
+                      background: 'rgba(0, 168, 255, 0.12)',
+                      border: '1px solid rgba(0, 168, 255, 0.25)',
+                      color: '#38bdf8',
+                      fontSize: '12px',
+                      fontWeight: '700',
+                      padding: '8px 16px',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s',
+                      outline: 'none',
+                      marginRight: 'auto'
+                    }}
                     onClick={fetchLoginSessions}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = 'rgba(0, 168, 255, 0.22)';
+                      e.currentTarget.style.borderColor = 'rgba(0, 168, 255, 0.4)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'rgba(0, 168, 255, 0.12)';
+                      e.currentTarget.style.borderColor = 'rgba(0, 168, 255, 0.25)';
+                    }}
                   >
                     Yenile
                   </button>
                   <button 
                     type="button" 
                     className="header-btn primary" 
+                    style={{ 
+                      background: 'rgba(0, 168, 255, 0.12)',
+                      border: '1px solid rgba(0, 168, 255, 0.25)',
+                      color: '#38bdf8',
+                      fontSize: '12px',
+                      fontWeight: '700',
+                      padding: '8px 16px',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s',
+                      outline: 'none'
+                    }}
                     onClick={() => setIsSettingsOpen(false)}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = 'rgba(0, 168, 255, 0.22)';
+                      e.currentTarget.style.borderColor = 'rgba(0, 168, 255, 0.4)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'rgba(0, 168, 255, 0.12)';
+                      e.currentTarget.style.borderColor = 'rgba(0, 168, 255, 0.25)';
+                    }}
                   >
                     Kapat
+                  </button>
+                </>
+              ) : (
+                <>
+                  {settingsTab === 'automation' && (
+                    <button
+                      type="button"
+                      className="header-btn"
+                      style={{ 
+                        background: 'rgba(0, 168, 255, 0.12)',
+                        border: '1px solid rgba(0, 168, 255, 0.25)',
+                        color: '#38bdf8',
+                        fontSize: '12px',
+                        fontWeight: '700',
+                        padding: '8px 16px',
+                        borderRadius: '8px',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s',
+                        outline: 'none',
+                        marginRight: 'auto'
+                      }}
+                      onClick={fetchAutomationLogs}
+                      disabled={isLogsLoading}
+                      onMouseEnter={(e) => {
+                        if (!isLogsLoading) {
+                          e.currentTarget.style.background = 'rgba(0, 168, 255, 0.22)';
+                          e.currentTarget.style.borderColor = 'rgba(0, 168, 255, 0.4)';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!isLogsLoading) {
+                          e.currentTarget.style.background = 'rgba(0, 168, 255, 0.12)';
+                          e.currentTarget.style.borderColor = 'rgba(0, 168, 255, 0.25)';
+                        }
+                      }}
+                    >
+                      Logları Yenile
+                    </button>
+                  )}
+                  {settingsTab === 'ai' && <div style={{ marginRight: 'auto' }} />}
+                  <button 
+                    type="button" 
+                    className="header-btn" 
+                    style={{ 
+                      background: 'rgba(0, 168, 255, 0.12)',
+                      border: '1px solid rgba(0, 168, 255, 0.25)',
+                      color: '#38bdf8',
+                      fontSize: '12px',
+                      fontWeight: '700',
+                      padding: '8px 16px',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s',
+                      outline: 'none'
+                    }}
+                    onClick={() => setIsSettingsOpen(false)}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = 'rgba(0, 168, 255, 0.22)';
+                      e.currentTarget.style.borderColor = 'rgba(0, 168, 255, 0.4)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'rgba(0, 168, 255, 0.12)';
+                      e.currentTarget.style.borderColor = 'rgba(0, 168, 255, 0.25)';
+                    }}
+                  >
+                    İptal
+                  </button>
+                  <button
+                    type="button"
+                    className="header-btn primary"
+                    style={{ 
+                      background: 'rgba(0, 168, 255, 0.12)',
+                      border: '1px solid rgba(0, 168, 255, 0.25)',
+                      color: '#38bdf8',
+                      fontSize: '12px',
+                      fontWeight: '700',
+                      padding: '8px 16px',
+                      borderRadius: '8px',
+                      cursor: isSavingAutomation ? 'not-allowed' : 'pointer',
+                      opacity: isSavingAutomation ? 0.6 : 1,
+                      transition: 'all 0.2s',
+                      outline: 'none'
+                    }}
+                    onClick={() => handleSaveAutomationSettings()}
+                    disabled={isSavingAutomation}
+                    onMouseEnter={(e) => {
+                      if (!isSavingAutomation) {
+                        e.currentTarget.style.background = 'rgba(0, 168, 255, 0.22)';
+                        e.currentTarget.style.borderColor = 'rgba(0, 168, 255, 0.4)';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!isSavingAutomation) {
+                        e.currentTarget.style.background = 'rgba(0, 168, 255, 0.12)';
+                        e.currentTarget.style.borderColor = 'rgba(0, 168, 255, 0.25)';
+                      }
+                    }}
+                  >
+                    {isSavingAutomation ? 'Kaydediliyor...' : 'Otomasyonu Kaydet'}
                   </button>
                 </>
               )}
@@ -10182,6 +12281,123 @@ export default function InboxPage() {
                 onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.08)'}
               >
                 Kapat
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Error / Alert Modal */}
+      {errorModal.isOpen && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          zIndex: 10500,
+          background: 'rgba(0, 0, 0, 0.75)',
+          backdropFilter: 'blur(8px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }} onClick={() => setErrorModal(prev => ({ ...prev, isOpen: false }))}>
+          <div style={{
+            background: '#1c1c1e',
+            border: '1px solid rgba(255, 255, 255, 0.1)',
+            borderRadius: '16px',
+            width: '400px',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+            boxShadow: '0 20px 40px rgba(0,0,0,0.6)',
+          }} onClick={(e) => e.stopPropagation()}>
+            {/* Header */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '16px 20px',
+              borderBottom: '1px solid rgba(255,255,255,0.08)',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {errorModal.type === 'error' && (
+                  <span style={{ color: '#ff3b30', fontSize: '18px', display: 'flex', alignItems: 'center' }}>
+                    ⚠️
+                  </span>
+                )}
+                {errorModal.type === 'warning' && (
+                  <span style={{ color: '#ffcc00', fontSize: '18px', display: 'flex', alignItems: 'center' }}>
+                    🛡️
+                  </span>
+                )}
+                {errorModal.type === 'info' && (
+                  <span style={{ color: '#007aff', fontSize: '18px', display: 'flex', alignItems: 'center' }}>
+                    ℹ️
+                  </span>
+                )}
+                <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '700', color: '#fff' }}>
+                  {errorModal.title}
+                </h3>
+              </div>
+              <button 
+                onClick={() => setErrorModal(prev => ({ ...prev, isOpen: false }))}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'rgba(255,255,255,0.5)',
+                  fontSize: '20px',
+                  cursor: 'pointer',
+                  padding: '4px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}
+              >
+                &times;
+              </button>
+            </div>
+
+            {/* Message Body */}
+            <div style={{
+              padding: '24px 20px',
+              color: 'rgba(255,255,255,0.9)',
+              fontSize: '14px',
+              lineHeight: '1.5',
+            }}>
+              {errorModal.message}
+            </div>
+
+            {/* Footer */}
+            <div style={{
+              padding: '12px 20px',
+              borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+              display: 'flex',
+              justifyContent: 'flex-end',
+              background: 'rgba(0,0,0,0.1)'
+            }}>
+              <button 
+                onClick={() => setErrorModal(prev => ({ ...prev, isOpen: false }))}
+                style={{
+                  padding: '8px 24px',
+                  background: errorModal.type === 'error' ? '#ff3b30' : (errorModal.type === 'warning' ? '#ff9500' : '#0095f6'),
+                  border: 'none',
+                  color: '#fff',
+                  fontSize: '12px',
+                  fontWeight: '700',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  transition: 'background 0.2s',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.2)'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.filter = 'brightness(1.1)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.filter = 'brightness(1)';
+                }}
+              >
+                Tamam
               </button>
             </div>
           </div>

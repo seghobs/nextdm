@@ -42,3 +42,20 @@ next-env.d.ts
 
 # scratch/temp files
 /scratch/
+
+# databases
+*.db
+*.db-journal
+
+# archives
+*.zip
+*.tar.gz
+
+# large data/log/temp files
+*.jsonl
+*.txt
+/inspect_messages.js
+/run_direct.ts
+/run_single_test.js
+/flows.json
+

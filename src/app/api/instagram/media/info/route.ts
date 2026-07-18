@@ -129,6 +129,7 @@ export async function POST(request: NextRequest) {
     // 5. Try to fetch dynamic counts from private API using resolved mediaId
     let likeCount: number | null = null;
     let commentCount: number | null = null;
+    let apiUsername: string | null = null;
 
     if (mediaId && mediaId !== shortcode) {
       try {
@@ -152,7 +153,10 @@ export async function POST(request: NextRequest) {
           if (item.comment_count !== undefined) {
             commentCount = item.comment_count;
           }
-          console.log(`[Media-Info] Successfully retrieved counts - Likes: ${likeCount}, Comments: ${commentCount}`);
+          if (item.user && item.user.username) {
+            apiUsername = item.user.username;
+          }
+          console.log(`[Media-Info] Successfully retrieved counts - Likes: ${likeCount}, Comments: ${commentCount}, Owner: ${apiUsername}`);
         }
       } catch (e) {
         console.warn('[Media-Info] Failed to fetch counts from private API:', e);
@@ -172,8 +176,16 @@ export async function POST(request: NextRequest) {
       title = titleMatch[1];
     }
 
-    let author = null;
-    if (rawDescription) {
+    let author = apiUsername || null;
+    if (!author) {
+      // Try to find (@username) pattern in description or title
+      const parenUsernameMatch = rawDescription.match(/\(@([A-Za-z0-9_.-]+)\)/) || 
+                                 rawTitle.match(/\(@([A-Za-z0-9_.-]+)\)/);
+      if (parenUsernameMatch) {
+        author = parenUsernameMatch[1];
+      }
+    }
+    if (!author && rawDescription) {
       const descMatch = rawDescription.match(/^([A-Za-z0-9_.-]+)\s+on\s+/i);
       if (descMatch) {
         author = descMatch[1];

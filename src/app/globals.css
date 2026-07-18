@@ -222,7 +222,7 @@ html, body {
   right: 2px;
   width: 14px;
   height: 14px;
-  background-color: #00f600;
+  background-color: #38bdf8;
   border: 3px solid var(--bg-pure);
   border-radius: 50%;
 }
@@ -751,9 +751,9 @@ textarea.form-input {
 }
 
 .alert-message.success {
-  background-color: rgba(75, 172, 78, 0.1);
-  border: 1px solid rgba(75, 172, 78, 0.3);
-  color: #bbf7bd;
+  background-color: rgba(56, 189, 248, 0.1);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  color: #e0f2fe;
 }
 
 /* Status overlays / alerts on main interface */

@@ -206,6 +206,19 @@ export async function POST(request: NextRequest) {
     }
 
     const json = JSON.parse(responseText);
+    
+    if (json.comments_disabled === true) {
+      console.log('[Comments-REST] Comments are disabled for this media.');
+      return NextResponse.json({
+        success: true,
+        comments: [],
+        commentsDisabled: true,
+        hasNextPage: false,
+        endCursor: null,
+        source: 'rest'
+      });
+    }
+
     const commentsList = json.comments || [];
     let endCursor = json.next_max_id || json.next_min_id || null;
     let hasNextPage = (endCursor !== undefined && endCursor !== null) || json.has_more_comments || json.has_more_headload_comments || false;

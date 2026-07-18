@@ -7,10 +7,19 @@ import zlib from 'zlib';
 // Programmatically enable all instagram API and MQTT client debug logs
 debug.enable('ig:*');
 
-let activeClient: any = null;
-let activeSessionId: string | null = null;
-let activeSeqId: string | null = null;
-let isConnecting = false;
+const globalForRealtime = global as unknown as {
+  activeClient: any;
+  activeSessionId: string | null;
+  activeSeqId: string | null;
+  isConnecting: boolean;
+};
+
+if (globalForRealtime.isConnecting === undefined) {
+  globalForRealtime.activeClient = null;
+  globalForRealtime.activeSessionId = null;
+  globalForRealtime.activeSeqId = null;
+  globalForRealtime.isConnecting = false;
+}
 
 export async function startRealtimeBridge(cookies: Record<string, string>, seqId: string) {
   const sessionId = cookies['sessionid'];
@@ -19,24 +28,31 @@ export async function startRealtimeBridge(cookies: Record<string, string>, seqId
     return;
   }
 
-  // If already connected with the same session and same sequence ID, do nothing
-  if (activeClient && activeSessionId === sessionId && activeSeqId === seqId) {
+  // If already connected with the same session and same sequence ID (or requested with fallback '0'), do nothing
+  if (
+    globalForRealtime.activeClient && 
+    globalForRealtime.activeSessionId === sessionId && 
+    (globalForRealtime.activeSeqId === seqId || seqId === '0' || !seqId)
+  ) {
     return;
   }
 
   // If credentials or sequence ID changed, disconnect the old client first
-  if (activeClient) {
-    console.log(`[MQTT-Bridge] Session or sequence ID changed (stale: ${activeSeqId}, new: ${seqId}). Disconnecting old realtime bridge...`);
+  if (globalForRealtime.activeClient) {
+    if (seqId === '0' || !seqId) {
+      return; // Do not disconnect healthy client for fallback requests
+    }
+    console.log(`[MQTT-Bridge] Session or sequence ID changed (stale: ${globalForRealtime.activeSeqId}, new: ${seqId}). Disconnecting old realtime bridge...`);
     try {
-      await activeClient.realtime.disconnect();
+      await globalForRealtime.activeClient.realtime.disconnect();
     } catch (e) {}
-    activeClient = null;
-    activeSessionId = null;
-    activeSeqId = null;
+    globalForRealtime.activeClient = null;
+    globalForRealtime.activeSessionId = null;
+    globalForRealtime.activeSeqId = null;
   }
 
-  if (isConnecting) return;
-  isConnecting = true;
+  if (globalForRealtime.isConnecting) return;
+  globalForRealtime.isConnecting = true;
 
   console.log(`[MQTT-Bridge] Starting direct Instagram WebSocket connection from backend with seqId: ${seqId}...`);
 
@@ -121,11 +137,11 @@ export async function startRealtimeBridge(cookies: Record<string, string>, seqId
 
     igRealtime.realtime.on('close', () => {
       console.log('[MQTT-Bridge] Realtime connection closed.');
-      if (activeSessionId === sessionId) {
+      if (globalForRealtime.activeSessionId === sessionId) {
         // Automatically restart connection if it closed unexpectedly
-        activeClient = null;
-        activeSessionId = null;
-        isConnecting = false;
+        globalForRealtime.activeClient = null;
+        globalForRealtime.activeSessionId = null;
+        globalForRealtime.isConnecting = false;
         setTimeout(() => startRealtimeBridge(cookies, seqId), 5000);
       }
     });
@@ -194,6 +210,16 @@ export async function startRealtimeBridge(cookies: Record<string, string>, seqId
           content_type: 'TEXT'
         }
       });
+
+      // Trigger background auto seen + AI check immediately for this thread!
+      try {
+        const { runBackgroundAutoSeen } = require('./automation-engine');
+        runBackgroundAutoSeen(true, threadId).catch((err: any) => {
+          console.error('[MQTT-Bridge] Error triggering auto seen on message event:', err);
+        });
+      } catch (err) {
+        console.error('[MQTT-Bridge] Failed to import runBackgroundAutoSeen:', err);
+      }
     });
 
     igRealtime.realtime.on('iris', (data: any) => {
@@ -202,11 +228,7 @@ export async function startRealtimeBridge(cookies: Record<string, string>, seqId
       realtimeEmitter.emit('event', { type: 'message' });
     });
 
-    // Fallback: trigger update on ANY raw packet received on the realtime channel
-    igRealtime.realtime.on('receive', (topic: any, messages: any) => {
-      console.log('[MQTT-Bridge] Raw packet received on topic:', topic?.path || topic);
-      realtimeEmitter.emit('update');
-    });
+
 
     igRealtime.realtime.on('realtimeSub', (data: any) => {
       console.log('[MQTT-Bridge] realtimeSub raw data received:', data);
@@ -253,6 +275,7 @@ export async function startRealtimeBridge(cookies: Record<string, string>, seqId
                         watermark: watermark ? String(watermark) : null,
                         itemId: itemId ? String(itemId) : null
                       });
+                      
                     }
                   }
                   
@@ -336,6 +359,7 @@ export async function startRealtimeBridge(cookies: Record<string, string>, seqId
               watermark: watermark ? String(watermark) : null,
               itemId: itemId ? String(itemId) : null
             });
+            
           } else if (Array.isArray(val)) {
             val.forEach((p: any) => {
               const pId = p.user_id || p.id;
@@ -383,29 +407,29 @@ export async function startRealtimeBridge(cookies: Record<string, string>, seqId
     // Connect to gateway passing options directly
     await igRealtime.realtime.connect(initOptions);
     
-    activeClient = igRealtime;
-    activeSessionId = sessionId;
-    activeSeqId = seqId;
+    globalForRealtime.activeClient = igRealtime;
+    globalForRealtime.activeSessionId = sessionId;
+    globalForRealtime.activeSeqId = seqId;
     console.log('[MQTT-Bridge] Direct Instagram WebSocket connection successfully established!');
   } catch (err) {
     console.error('[MQTT-Bridge] Failed to establish direct connection:', err);
-    activeClient = null;
-    activeSessionId = null;
-    activeSeqId = null;
+    globalForRealtime.activeClient = null;
+    globalForRealtime.activeSessionId = null;
+    globalForRealtime.activeSeqId = null;
   } finally {
-    isConnecting = false;
+    globalForRealtime.isConnecting = false;
   }
 }
 
 export async function sendTypingIndicator(threadId: string, isActive: boolean): Promise<boolean> {
-  if (!activeClient) {
+  if (!globalForRealtime.activeClient) {
     console.log('[MQTT-Bridge] No active realtime client to send typing indicator.');
     return false;
   }
   
   try {
     console.log(`[MQTT-Bridge] Sending typing indicator to thread ${threadId}: ${isActive}`);
-    await activeClient.realtime.direct.indicateActivity({
+    await globalForRealtime.activeClient.realtime.direct.indicateActivity({
       threadId,
       isActive
     });

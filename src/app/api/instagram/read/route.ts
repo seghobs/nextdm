@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
         ig_thread_igid: threadId
       },
       data: {
-        item_id: '',
+        item_id: messageId,
         message_id: messageId
       }
     };
