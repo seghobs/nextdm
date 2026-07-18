@@ -2059,19 +2059,28 @@ export default function InboxPage() {
     // Handle XMA (e.g. SlideMessageXMAContent)
     const xmaContent = node.content?.xma || node.xma || null;
     if (xmaContent) {
-      const isReel = xmaContent.target_url?.includes('/reel/') || 
-                      xmaContent.target_url?.includes('/reels/') || 
-                      xmaContent.title_text?.toLowerCase()?.includes('reels') ||
-                      xmaContent.xmaTitle?.toLowerCase()?.includes('reels');
-                      
-      const isStory = xmaContent.target_url?.includes('/stories/') || 
-                       xmaContent.title_text?.toLowerCase()?.includes('hikaye') ||
-                       xmaContent.xmaTitle?.toLowerCase()?.includes('story') ||
-                       node.igd_snippet?.toLowerCase()?.includes('hikaye') ||
-                       node.igd_snippet?.toLowerCase()?.includes('dosya eki') ||
-                       text?.toLowerCase()?.includes('dosya eki');
-                      
-      mediaType = isStory ? 'story_share' : (isReel ? 'clip' : 'media_share');
+      const targetUrl = xmaContent.target_url || '';
+      const isReel = targetUrl.includes('/reel/') || targetUrl.includes('/reels/');
+      const isStory = targetUrl.includes('/stories/') || targetUrl.includes('/story/');
+      const isPost = targetUrl.includes('/p/') || targetUrl.includes('/tv/');
+      
+      if (isReel) {
+        mediaType = 'clip';
+      } else if (isStory) {
+        mediaType = 'story_share';
+      } else if (isPost) {
+        mediaType = 'media_share';
+      } else {
+        const textLower = (xmaContent.title_text || xmaContent.xmaTitle || '').toLowerCase();
+        if (textLower.includes('reels') || textLower.includes('reel')) {
+          mediaType = 'clip';
+        } else if (textLower.includes('story') || textLower.includes('hikaye')) {
+          mediaType = 'story_share';
+        } else {
+          mediaType = 'media_share';
+        }
+      }
+
       previewUrl = xmaContent.preview_image?.url || 
                    xmaContent.xmaPreviewImage?.url || 
                    xmaContent.preview_url || 
@@ -2082,7 +2091,6 @@ export default function InboxPage() {
       author = xmaContent.header_title_text || xmaContent.xmaHeaderTitle || xmaContent.subtitle_text || null;
       mediaId = xmaContent.target_id || null;
       
-      // Try to unwrap counts if present in the raw media object inside xma
       const innerMedia = xmaContent.media || xmaContent.xma_media || null;
       if (innerMedia) {
         likeCount = innerMedia.like_count || innerMedia.like_and_view_metadata_dict?.like_count || null;
@@ -2090,8 +2098,30 @@ export default function InboxPage() {
       }
       
       if (!text) {
-        text = `${isStory ? 'Hikaye' : (isReel ? 'Reels videosu' : 'Gönderi')} paylaştı: ${title || ''}`;
+        const typeLabel = mediaType === 'story_share' ? 'Hikaye' : (mediaType === 'clip' ? 'Reels videosu' : 'Gönderi');
+        text = `${typeLabel} paylaştı: ${title || ''}`;
       }
+
+      const cleanSnippetText = (tStr: string, mType: string) => {
+        if (!tStr) return tStr;
+        if (tStr.includes('dosya eki')) {
+          const isSentByMe = tStr.includes('gönderdin');
+          if (mType === 'clip') {
+            return isSentByMe ? tStr.replace('bir dosya eki gönderdin.', 'bir reels videosu paylaştın.') 
+                              : tStr.replace('bir dosya eki gönderdi.', 'bir reels videosu paylaştı.');
+          } else if (mType === 'story_share') {
+            return isSentByMe ? tStr.replace('bir dosya eki gönderdin.', 'bir hikaye paylaştın.') 
+                              : tStr.replace('bir dosya eki gönderdi.', 'bir hikaye paylaştı.');
+          } else {
+            return isSentByMe ? tStr.replace('bir dosya eki gönderdin.', 'bir gönderi paylaştın.') 
+                              : tStr.replace('bir dosya eki gönderdi.', 'bir gönderi paylaştı.');
+          }
+        }
+        return tStr;
+      };
+
+      text = cleanSnippetText(text, mediaType);
+      node.igd_snippet = cleanSnippetText(node.igd_snippet || text, mediaType);
     }
 
     const repliedMessage = (node.replied_to_message || node.reply_to_message) ? {
