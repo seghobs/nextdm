@@ -3006,6 +3006,7 @@ export default function InboxPage() {
       formData.append('threadId', targetThreadId);
       formData.append('cookies', JSON.stringify(cookiesRef.current || cookies));
       formData.append('headers', JSON.stringify(headersRef.current || headers));
+      formData.append('data', JSON.stringify(postDataRef.current || postData));
       
       const res = await fetch('/api/instagram/send_voice', {
         method: 'POST',
