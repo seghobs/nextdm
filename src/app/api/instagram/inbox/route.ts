@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { DEFAULT_COOKIES, DEFAULT_HEADERS, DEFAULT_DATA } from '@/lib/instagram-defaults';
+import { syncActiveSettings } from '@/lib/db';
 
 export async function POST(request: NextRequest) {
   try {
@@ -248,6 +249,14 @@ export async function POST(request: NextRequest) {
           details: jsonResponse.errors,
           cookies: updatedCookies
         }, { status: 200 }); // GraphQL errors are usually returned with 200 status
+      }
+
+      // Sync active session credentials to database for background tasks
+      try {
+        const mergedCookies = { ...customCookies, ...updatedCookies };
+        syncActiveSettings(mergedCookies, customHeaders, customData);
+      } catch (dbSyncErr) {
+        console.error('[Inbox-API] Failed to sync session database:', dbSyncErr);
       }
 
       return NextResponse.json({

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { DEFAULT_COOKIES, DEFAULT_HEADERS, DEFAULT_DATA } from '@/lib/instagram-defaults';
+import { syncActiveSettings } from '@/lib/db';
 
 export async function POST(request: NextRequest) {
   try {
@@ -82,6 +83,14 @@ export async function POST(request: NextRequest) {
 
     const json = JSON.parse(responseText);
     const thread = json.thread || {};
+
+    // Sync active session credentials to database for background tasks
+    try {
+      const mergedCookies = { ...customCookies, ...updatedCookies };
+      syncActiveSettings(mergedCookies, customHeaders);
+    } catch (dbSyncErr) {
+      console.error('[History-API] Failed to sync session database:', dbSyncErr);
+    }
 
     return NextResponse.json({
       success: true,

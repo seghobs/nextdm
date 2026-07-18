@@ -207,6 +207,24 @@ try {
   console.error('[DB-Migration] Failed to migrate default DM template:', e);
 }
 
+export function syncActiveSettings(cookies: any, headers: any, postData?: any) {
+  try {
+    const cookiesStr = cookies ? (typeof cookies === 'string' ? cookies : JSON.stringify(cookies)) : null;
+    const headersStr = headers ? (typeof headers === 'string' ? headers : JSON.stringify(headers)) : null;
+    const postDataStr = postData ? (typeof postData === 'string' ? postData : JSON.stringify(postData)) : null;
+
+    if (cookiesStr && headersStr) {
+      db.prepare(`
+        UPDATE automation_settings
+        SET cookies = ?, headers = ?, post_data = COALESCE(?, post_data)
+        WHERE id = 1
+      `).run(cookiesStr, headersStr, postDataStr);
+    }
+  } catch (err: any) {
+    console.error('[DB-Sync] Failed to sync active settings to SQLite:', err.message);
+  }
+}
+
 export default db;
 export interface AutomationSettings {
   enabled: number;
