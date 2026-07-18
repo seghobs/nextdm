@@ -1883,7 +1883,22 @@ export default function InboxPage() {
           }
         }
 
-        const fallbackText = text || item.igd_snippet || (item.item_type ? `[${item.item_type}]` : 'Ek içerik');
+        let fallbackText = text || item.igd_snippet || (item.item_type ? `[${item.item_type}]` : 'Ek içerik');
+
+        // Rewrite generic "dosya eki" snippets
+        if (fallbackText && fallbackText.includes('dosya eki')) {
+          const isSentByMe = fallbackText.includes('gönderdin');
+          if (mediaType === 'clip') {
+            fallbackText = isSentByMe ? fallbackText.replace('bir dosya eki gönderdin.', 'bir reels videosu paylaştın.') 
+                                      : fallbackText.replace('bir dosya eki gönderdi.', 'bir reels videosu paylaştı.');
+          } else if (mediaType === 'story_share') {
+            fallbackText = isSentByMe ? fallbackText.replace('bir dosya eki gönderdin.', 'bir hikaye paylaştın.') 
+                                      : fallbackText.replace('bir dosya eki gönderdi.', 'bir hikaye paylaştı.');
+          } else {
+            fallbackText = isSentByMe ? fallbackText.replace('bir dosya eki gönderdin.', 'bir gönderi paylaştın.') 
+                                      : fallbackText.replace('bir dosya eki gönderdi.', 'bir gönderi paylaştı.');
+          }
+        }
 
         const rawReplied = item.replied_to_message || item.reply_to_message;
         const repliedMessage = rawReplied ? {
@@ -3786,7 +3801,22 @@ export default function InboxPage() {
             }
           }
 
-          const fallbackText = text || item.igd_snippet || (item.item_type ? `[${item.item_type}]` : 'Ek içerik');
+          let fallbackText = text || item.igd_snippet || (item.item_type ? `[${item.item_type}]` : 'Ek içerik');
+
+          // Rewrite generic "dosya eki" snippets
+          if (fallbackText && fallbackText.includes('dosya eki')) {
+            const isSentByMe = fallbackText.includes('gönderdin');
+            if (mediaType === 'clip') {
+              fallbackText = isSentByMe ? fallbackText.replace('bir dosya eki gönderdin.', 'bir reels videosu paylaştın.') 
+                                        : fallbackText.replace('bir dosya eki gönderdi.', 'bir reels videosu paylaştı.');
+            } else if (mediaType === 'story_share') {
+              fallbackText = isSentByMe ? fallbackText.replace('bir dosya eki gönderdin.', 'bir hikaye paylaştın.') 
+                                        : fallbackText.replace('bir dosya eki gönderdi.', 'bir hikaye paylaştı.');
+            } else {
+              fallbackText = isSentByMe ? fallbackText.replace('bir dosya eki gönderdin.', 'bir gönderi paylaştın.') 
+                                        : fallbackText.replace('bir dosya eki gönderdi.', 'bir gönderi paylaştı.');
+            }
+          }
 
           const rawReplied = item.replied_to_message || item.reply_to_message;
           const repliedMessage = rawReplied ? {
