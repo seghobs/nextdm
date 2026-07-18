@@ -921,6 +921,51 @@ export default function InboxPage() {
     }
   };
 
+  const getThreadSnippet = (thread: InstagramThread) => {
+    const edges = thread.slide_messages?.edges || [];
+    if (edges.length === 0) return 'Mesaj yok';
+
+    const sortedEdges = [...edges].sort((a, b) => Number(a.node?.timestamp_ms || 0) - Number(b.node?.timestamp_ms || 0));
+    const lastMsgEdge = sortedEdges[sortedEdges.length - 1];
+    const lastMsg = lastMsgEdge?.node;
+    if (!lastMsg) return 'Mesaj yok';
+
+    let snippet = lastMsg.igd_snippet || lastMsg.text_body || '';
+
+    const senderId = String(lastMsg.sender_fbid || '');
+    const viewerId = String(cookies['ds_user_id'] || '');
+    const isMe = senderId === viewerId;
+
+    if (thread.is_group) {
+      if (isMe) {
+        if (!snippet.toLowerCase().startsWith('sen:')) {
+          snippet = `Sen: ${snippet}`;
+        }
+      } else {
+        const senderUser = thread.users?.find(u => String(u.id || u.pk || u.interop_messaging_user_fbid) === senderId);
+        const displayName = senderUser ? (senderUser.full_name || senderUser.username) : null;
+        if (displayName) {
+          const startsWithDisplayName = snippet.toLowerCase().startsWith(displayName.toLowerCase());
+          const startsWithUsername = senderUser?.username && snippet.toLowerCase().startsWith(senderUser.username.toLowerCase());
+          
+          if (!startsWithDisplayName && !startsWithUsername) {
+            snippet = `${displayName}: ${snippet}`;
+          }
+        } else if (senderUser?.username) {
+          if (!snippet.toLowerCase().startsWith(senderUser.username.toLowerCase())) {
+            snippet = `${senderUser.username}: ${snippet}`;
+          }
+        }
+      }
+    } else {
+      if (isMe && !snippet.toLowerCase().startsWith('sen:')) {
+        snippet = `Sen: ${snippet}`;
+      }
+    }
+
+    return snippet;
+  };
+
   const isPartnerTyping = useMemo(() => {
     return isThreadTyping(activeThread);
   }, [activeThread, typingRegistry]);
@@ -6062,9 +6107,7 @@ export default function InboxPage() {
           ) : (
             filteredThreads.map((thread) => {
               const active = thread.id === activeThreadId;
-              const edges = thread.slide_messages?.edges || [];
-              const lastMsgEdge = edges[edges.length - 1];
-              const snippet = lastMsgEdge?.node?.igd_snippet || 'Mesaj yok';
+              const snippet = getThreadSnippet(thread);
               const partner = thread.users?.[0] || { full_name: thread.thread_title, username: '', profile_pic_url: '' };
               
               const isGroup = thread.is_group;
