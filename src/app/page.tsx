@@ -2914,6 +2914,132 @@ export default function InboxPage() {
   const [selectedImagePreviewUrl, setSelectedImagePreviewUrl] = useState<string | null>(null);
   const [replyToMessage, setReplyToMessage] = useState<InstagramMessage | null>(null);
 
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const [isUploadingVoice, setIsUploadingVoice] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const voiceFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunksRef.current = [];
+      
+      const options = { mimeType: 'audio/webm' };
+      let recorder;
+      try {
+        recorder = new MediaRecorder(stream, options);
+      } catch (e) {
+        recorder = new MediaRecorder(stream);
+      }
+      
+      mediaRecorderRef.current = recorder;
+      
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+      
+      recorder.onstop = async () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        stream.getTracks().forEach(track => track.stop());
+        await sendVoiceMessage(audioBlob, 'recorded_voice.m4a');
+      };
+      
+      recorder.start();
+      setIsRecording(true);
+      setRecordingDuration(0);
+      
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingDuration(prev => prev + 1);
+      }, 1000);
+      
+    } catch (err) {
+      console.error('Mikrofon izni alınamadı:', err);
+      alert('Mikrofon izni alınamadı. Lütfen tarayıcı ayarlarından mikrofon iznini kontrol edin.');
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
+    }
+  };
+
+  const cancelRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.ondataavailable = null;
+      mediaRecorderRef.current.stop();
+      const stream = mediaRecorderRef.current.stream;
+      stream.getTracks().forEach(track => track.stop());
+      setIsRecording(false);
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
+      setRecordingDuration(0);
+    }
+  };
+
+  const sendVoiceMessage = async (audioBlob: Blob, filename: string) => {
+    if (!activeThreadId) return;
+    
+    setIsUploadingVoice(true);
+    
+    const threadObj = threads.find(t => t.id === activeThreadId);
+    const targetThreadId = threadObj?.thread_id || activeThreadId;
+    
+    const tempMsgId = `temp_voice_${Date.now()}`;
+    appendLocalMessage(activeThreadId, 'Bir sesli mesaj gönderdi.', tempMsgId);
+    
+    try {
+      const formData = new FormData();
+      formData.append('file', audioBlob, filename);
+      formData.append('threadId', targetThreadId);
+      formData.append('cookies', JSON.stringify(cookiesRef.current || cookies));
+      formData.append('headers', JSON.stringify(headersRef.current || headers));
+      
+      const res = await fetch('/api/instagram/send_voice', {
+        method: 'POST',
+        body: formData
+      });
+      
+      const result = await res.json();
+      if (!res.ok || !result.success) {
+        throw new Error(result.error || 'Sesli mesaj gönderilemedi.');
+      }
+      
+      if (result.cookies) {
+        handleUpdateCookies(result.cookies);
+      }
+      
+      if (activeThread) {
+        fetchThreadHistory(activeThread);
+      }
+      
+    } catch (err: any) {
+      console.error('[Voice-Send] Failed to send voice message:', err);
+      alert('Sesli mesaj gönderilemedi: ' + (err.message || 'Bilinmeyen hata'));
+    } finally {
+      setIsUploadingVoice(false);
+    }
+  };
+
+  const handleVoiceFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    sendVoiceMessage(file, file.name);
+  };
+
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -6702,66 +6828,152 @@ export default function InboxPage() {
                 )}
 
                 <div className="chat-input-container">
-                  <input 
-                    ref={chatInputRef}
-                    type="text" 
-                    className="chat-input" 
-                    placeholder="Mesaj yaz..." 
-                    value={typedMessage}
-                    onChange={(e) => {
-                      setTypedMessage(e.target.value);
-                      handleUserTyping();
-                      recordInteraction();
-                    }}
-                  />
-                  
-                  <div className="chat-input-buttons">
-                    {(typedMessage.trim() || selectedImageFile || replyToMessage) ? (
-                      <button type="submit" className="send-btn">Gönder</button>
-                    ) : (
-                      <>
-                        <input 
-                          type="file" 
-                          ref={fileInputRef} 
-                          style={{ display: 'none' }} 
-                          accept="image/*" 
-                          onChange={handleImageUpload} 
-                        />
-                        <button 
-                          type="button" 
-                          className="icon-btn" 
-                          title="Resim Ekle" 
-                          disabled={isUploadingImage}
-                          onClick={() => fileInputRef.current?.click()}
-                          style={{ position: 'relative' }}
-                        >
-                          {isUploadingImage ? (
-                            <svg className="refresh-spinning" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
-                            </svg>
-                          ) : (
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-                              <circle cx="8.5" cy="8.5" r="1.5"></circle>
-                              <polyline points="21 15 16 10 5 21"></polyline>
-                            </svg>
-                          )}
-                        </button>
-                        <button 
-                          type="button" 
-                          className="icon-btn" 
-                          title="Beğeni" 
-                          onClick={() => {
-                            setTypedMessage('❤️');
-                          }}
-                        >
-                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path>
-                          </svg>
-                        </button>
-                      </>
-                    )}
-                  </div>
+                  {isRecording ? (
+                    <div style={{ display: 'flex', alignItems: 'center', width: '100%', gap: '12px', padding: '0 8px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1 }}>
+                        <span className="recording-dot" style={{
+                          width: '10px',
+                          height: '10px',
+                          borderRadius: '50%',
+                          backgroundColor: '#ff4d4d',
+                          animation: 'pulse 1.5s infinite'
+                        }}></span>
+                        <span style={{ fontSize: '14px', fontWeight: '500', color: '#fff' }}>
+                          Ses Kaydediliyor... {Math.floor(recordingDuration / 60).toString().padStart(2, '0')}:{(recordingDuration % 60).toString().padStart(2, '0')}
+                        </span>
+                      </div>
+                      
+                      <button 
+                        type="button" 
+                        onClick={cancelRecording}
+                        className="icon-btn"
+                        title="İptal Et"
+                        style={{ color: '#ff4d4d' }}
+                      >
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <line x1="18" y1="6" x2="6" y2="18"></line>
+                          <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                      </button>
+
+                      <button 
+                        type="button" 
+                        onClick={stopRecording}
+                        className="send-btn"
+                        title="Kaydı Bitir ve Gönder"
+                        style={{ backgroundColor: '#25D366', border: 'none', color: '#fff', padding: '6px 12px', borderRadius: '20px', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}
+                      >
+                        Gönder
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <input 
+                        ref={chatInputRef}
+                        type="text" 
+                        className="chat-input" 
+                        placeholder="Mesaj yaz..." 
+                        value={typedMessage}
+                        onChange={(e) => {
+                          setTypedMessage(e.target.value);
+                          handleUserTyping();
+                          recordInteraction();
+                        }}
+                      />
+                      
+                      <div className="chat-input-buttons">
+                        {(typedMessage.trim() || selectedImageFile || replyToMessage) ? (
+                          <button type="submit" className="send-btn">Gönder</button>
+                        ) : (
+                          <>
+                            <input 
+                              type="file" 
+                              ref={fileInputRef} 
+                              style={{ display: 'none' }} 
+                              accept="image/*" 
+                              onChange={handleImageUpload} 
+                            />
+                            <input 
+                              type="file" 
+                              ref={voiceFileInputRef} 
+                              style={{ display: 'none' }} 
+                              accept="audio/*" 
+                              onChange={handleVoiceFileUpload} 
+                            />
+                            
+                            <button 
+                              type="button" 
+                              className="icon-btn" 
+                              title="Resim Ekle" 
+                              disabled={isUploadingImage}
+                              onClick={() => fileInputRef.current?.click()}
+                              style={{ position: 'relative' }}
+                            >
+                              {isUploadingImage ? (
+                                <svg className="refresh-spinning" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
+                                </svg>
+                              ) : (
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                                  <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                                  <polyline points="21 15 16 10 5 21"></polyline>
+                                </svg>
+                              )}
+                            </button>
+
+                            <button 
+                              type="button" 
+                              className="icon-btn" 
+                              title="Ses Dosyası Yükle" 
+                              disabled={isUploadingVoice}
+                              onClick={() => voiceFileInputRef.current?.click()}
+                              style={{ position: 'relative' }}
+                            >
+                              {isUploadingVoice ? (
+                                <svg className="refresh-spinning" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
+                                </svg>
+                              ) : (
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M9 18V5l12-2v13"></path>
+                                  <circle cx="6" cy="18" r="3"></circle>
+                                  <circle cx="18" cy="16" r="3"></circle>
+                                </svg>
+                              )}
+                            </button>
+
+                            <button 
+                              type="button" 
+                              className="icon-btn" 
+                              title="Ses Kaydet" 
+                              onClick={startRecording}
+                            >
+                              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"></path>
+                                <path d="M19 10v1a7 7 0 0 1-14 0v-1"></path>
+                                <line x1="12" y1="19" x2="12" y2="23"></line>
+                                <line x1="8" y1="23" x2="16" y2="23"></line>
+                              </svg>
+                            </button>
+
+                            <button 
+                              type="button" 
+                              className="icon-btn" 
+                              title="Beğeni" 
+                              onClick={() => {
+                                setTypedMessage('❤️');
+                              }}
+                            >
+                              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path>
+                              </svg>
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </>
+                  )}
                 </div>
               </form>
             )}
@@ -6781,12 +6993,17 @@ export default function InboxPage() {
         )}
       </main>
 
-      {/* MOBILE STYLES INJECTOR */}
+      {/* MOBILE & VOICE RECORDING STYLES INJECTOR */}
       <style jsx global>{`
         @media (max-width: 768px) {
           #mobile-back-btn {
             display: flex !important;
           }
+        }
+        @keyframes pulse {
+          0% { transform: scale(1); opacity: 1; }
+          50% { transform: scale(1.2); opacity: 0.5; }
+          100% { transform: scale(1); opacity: 1; }
         }
       `}</style>
 
