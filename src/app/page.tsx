@@ -4880,7 +4880,6 @@ export default function InboxPage() {
   };
 
   const handleMsgContextMenu = (e: React.MouseEvent, msg: InstagramMessage) => {
-    if (msg.content_type !== 'TEXT') return;
 
     e.preventDefault();
     if (!activeThread) return;
@@ -6373,10 +6372,10 @@ export default function InboxPage() {
                               title="Daha fazla"
                               onClick={(e) => {
                                 e.preventDefault();
-                                if (msg.content_type === 'TEXT') {
-                                  handleMsgContextMenu(e, msg);
-                                } else {
+                                if (msg.media_type === 'clip' || msg.media_type === 'media_share') {
                                   handleContextMenu(e, msg, 'right-click');
+                                } else {
+                                  handleMsgContextMenu(e, msg);
                                 }
                               }}
                             >
@@ -10606,35 +10605,37 @@ export default function InboxPage() {
           padding: '4px',
           minWidth: '180px',
         }}>
-          <button 
-            onClick={() => {
-              navigator.clipboard.writeText(msgContextMenu.text);
-              setMsgContextMenu(prev => ({ ...prev, visible: false }));
-            }}
-            style={{
-              width: '100%',
-              textAlign: 'left',
-              padding: '10px 12px',
-              background: 'none',
-              border: 'none',
-              color: '#fff',
-              fontSize: '13px',
-              cursor: 'pointer',
-              borderRadius: '6px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              transition: 'background 0.2s'
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.08)'}
-            onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-            </svg>
-            Kopyala
-          </button>
+          {msgContextMenu.message?.content_type === 'TEXT' && (
+            <button 
+              onClick={() => {
+                navigator.clipboard.writeText(msgContextMenu.text);
+                setMsgContextMenu(prev => ({ ...prev, visible: false }));
+              }}
+              style={{
+                width: '100%',
+                textAlign: 'left',
+                padding: '10px 12px',
+                background: 'none',
+                border: 'none',
+                color: '#fff',
+                fontSize: '13px',
+                cursor: 'pointer',
+                borderRadius: '6px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                transition: 'background 0.2s'
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.08)'}
+              onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              </svg>
+              Kopyala
+            </button>
+          )}
 
           <button 
             onClick={() => {
@@ -10668,39 +10669,41 @@ export default function InboxPage() {
             Yanıtla
           </button>
 
-          <button 
-            onClick={() => {
-              setForwardMessageText(msgContextMenu.text);
-              setForwardSelectedRecipients({});
-              setForwardSearchQuery('');
-              setIsForwardModalOpen(true);
-              setMsgContextMenu(prev => ({ ...prev, visible: false }));
-            }}
-            style={{
-              width: '100%',
-              textAlign: 'left',
-              padding: '10px 12px',
-              background: 'none',
-              border: 'none',
-              color: '#fff',
-              fontSize: '13px',
-              cursor: 'pointer',
-              borderRadius: '6px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              transition: 'background 0.2s',
-              marginTop: '2px'
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.08)'}
-            onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="22" y1="2" x2="11" y2="13"></line>
-              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-            </svg>
-            Yönlendir...
-          </button>
+          {msgContextMenu.message?.content_type === 'TEXT' && (
+            <button 
+              onClick={() => {
+                setForwardMessageText(msgContextMenu.text);
+                setForwardSelectedRecipients({});
+                setForwardSearchQuery('');
+                setIsForwardModalOpen(true);
+                setMsgContextMenu(prev => ({ ...prev, visible: false }));
+              }}
+              style={{
+                width: '100%',
+                textAlign: 'left',
+                padding: '10px 12px',
+                background: 'none',
+                border: 'none',
+                color: '#fff',
+                fontSize: '13px',
+                cursor: 'pointer',
+                borderRadius: '6px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                transition: 'background 0.2s',
+                marginTop: '2px'
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.08)'}
+              onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="22" y1="2" x2="11" y2="13"></line>
+                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+              </svg>
+              Yönlendir...
+            </button>
+          )}
 
           {msgContextMenu.isOwnMessage && (
             <>
