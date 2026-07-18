@@ -90,6 +90,7 @@ export async function POST(request: NextRequest) {
         if (!obj || typeof obj !== 'object') return null;
         if (obj.fbid) return String(obj.fbid);
         if (obj.attachment_id) return String(obj.attachment_id);
+        if (obj.audio_id) return String(obj.audio_id);
         for (const val of Object.values(obj)) {
           const found = findFbid(val);
           if (found) return found;
