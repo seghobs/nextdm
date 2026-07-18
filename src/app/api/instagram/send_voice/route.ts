@@ -103,10 +103,11 @@ export async function POST(request: NextRequest) {
     }
 
     if (!fbid) {
+      console.error('[Send-Voice-API] Upload response did not contain fbid. Raw response:', sanitizedUploadText);
       return NextResponse.json({
         success: false,
         error: 'Could not find fbid in upload response',
-        details: sanitizedUploadText.slice(0, 500)
+        details: sanitizedUploadText.slice(0, 1000)
       }, { status: 502 });
     }
 
