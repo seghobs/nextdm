@@ -81,10 +81,38 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    console.log('[Send-Voice-API] Audio upload completed successfully. Now configuring voice media...');
+    console.log('[Send-Voice-API] Audio upload completed successfully. Finalizing upload via upload_finish...');
+
+    // Step 1.5: Finalize the upload
+    const finishUrl = 'https://i.instagram.com/api/v1/media/upload_finish/';
+    const finishHeaders: Record<string, string> = {
+      ...DEFAULT_HEADERS,
+      ...customHeaders,
+      'cookie': cookieHeaderStr,
+      'user-agent': androidUserAgent,
+      'content-type': 'application/x-www-form-urlencoded',
+    };
+    const finishParams = new URLSearchParams();
+    finishParams.append('upload_id', uploadId);
+    finishParams.append('source_type', '4');
+
+    try {
+      const finishResponse = await fetch(finishUrl, {
+        method: 'POST',
+        headers: finishHeaders,
+        body: finishParams.toString()
+      });
+      if (finishResponse.ok) {
+        console.log('[Send-Voice-API] upload_finish successfully completed.');
+      } else {
+        console.warn(`[Send-Voice-API] upload_finish warning: returned status ${finishResponse.status}`);
+      }
+    } catch (finishErr) {
+      console.warn('[Send-Voice-API] upload_finish request error, attempting configuration anyway:', finishErr);
+    }
 
     // Step 2: Configure and broadcast the voice note
-    const configureUrl = 'https://i.instagram.com/api/v1/direct_v2/threads/broadcast/configure_voice_media/';
+    const configureUrl = 'https://i.instagram.com/api/v1/direct_v2/threads/broadcast/voice_media/';
     
     // Generate dummy waveform (Instagram expects array of float values)
     const dummyWaveform = Array.from({ length: 30 }, () => parseFloat((Math.random() * 0.8 + 0.2).toFixed(2)));
