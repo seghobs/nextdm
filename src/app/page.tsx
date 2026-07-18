@@ -317,7 +317,7 @@ const VoiceMessagePlayer = ({ audioUrl, sent }: { audioUrl: string; sent: boolea
 
       {/* Waveform Visualization & Timer */}
       <div style={{ display: 'flex', flexDirection: 'column', flex: 1, gap: '4px', minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '2px', height: '24px', flex: 1 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '2px', height: '24px', width: '100%' }}>
           {barHeights.map((h, i) => {
             const barProgress = (i / barHeights.length) * 100;
             const isActive = progress > barProgress;
@@ -326,11 +326,11 @@ const VoiceMessagePlayer = ({ audioUrl, sent }: { audioUrl: string; sent: boolea
                 key={i} 
                 style={{
                   flex: 1,
-                  height: `${h}%`,
-                  borderRadius: '1px',
+                  height: `${h * 0.2}px`,
+                  borderRadius: '1.5px',
                   backgroundColor: isActive 
-                    ? (sent ? '#fff' : '#0095f6') 
-                    : 'rgba(255,255,255,0.2)',
+                    ? '#fff' 
+                    : 'rgba(255,255,255,0.25)',
                   transition: 'background-color 0.15s ease'
                 }}
               />

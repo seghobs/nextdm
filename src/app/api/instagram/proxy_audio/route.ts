@@ -38,11 +38,36 @@ export async function GET(request: NextRequest) {
 
     const audioBuffer = await res.arrayBuffer();
     const contentType = res.headers.get('content-type') || 'audio/mp4';
+    const byteLength = audioBuffer.byteLength;
+    const rangeHeader = request.headers.get('range');
+
+    if (rangeHeader) {
+      console.log(`[AudioProxy-API] Handling range request: ${rangeHeader}`);
+      const parts = rangeHeader.replace(/bytes=/, "").split("-");
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : byteLength - 1;
+      const chunksize = (end - start) + 1;
+      
+      const slicedBuffer = audioBuffer.slice(start, end + 1);
+      
+      return new Response(slicedBuffer, {
+        status: 206,
+        headers: {
+          'Content-Range': `bytes ${start}-${end}/${byteLength}`,
+          'Accept-Ranges': 'bytes',
+          'Content-Length': String(chunksize),
+          'Content-Type': contentType,
+          'Cache-Control': 'public, max-age=86400',
+          'Access-Control-Allow-Origin': '*',
+        }
+      });
+    }
 
     return new Response(audioBuffer, {
       headers: {
         'Content-Type': contentType,
-        'Content-Length': String(audioBuffer.byteLength),
+        'Content-Length': String(byteLength),
+        'Accept-Ranges': 'bytes',
         'Cache-Control': 'public, max-age=86400',
         'Access-Control-Allow-Origin': '*',
       }
