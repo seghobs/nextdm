@@ -1,5 +1,37 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { DEFAULT_COOKIES, DEFAULT_HEADERS, DEFAULT_DATA } from '@/lib/instagram-defaults';
+import { exec } from 'child_process';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
+
+async function transcodeToM4A(inputBuffer: Buffer): Promise<Buffer> {
+  const tempDir = os.tmpdir();
+  const inputPath = path.join(tempDir, `ig_voice_input_${Date.now()}.webm`);
+  const outputPath = path.join(tempDir, `ig_voice_output_${Date.now()}.m4a`);
+
+  try {
+    await fs.promises.writeFile(inputPath, inputBuffer);
+    const ffmpegCmd = `ffmpeg -y -i "${inputPath}" -c:a aac -b:a 64k "${outputPath}"`;
+    console.log(`[Send-Voice-API] Transcoding voice note with command: ${ffmpegCmd}`);
+    await execAsync(ffmpegCmd);
+    const outputBuffer = await fs.promises.readFile(outputPath);
+    return outputBuffer;
+  } catch (err: any) {
+    console.error('[Send-Voice-API] FFmpeg transcoding failed:', err.message || err);
+    return inputBuffer;
+  } finally {
+    try {
+      if (fs.existsSync(inputPath)) await fs.promises.unlink(inputPath);
+    } catch {}
+    try {
+      if (fs.existsSync(outputPath)) await fs.promises.unlink(outputPath);
+    } catch {}
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -56,9 +88,18 @@ export async function POST(request: NextRequest) {
     const uploadUrl = `https://www.instagram.com/ajax/mercury/upload.php?${queryParams.toString()}`;
 
     const formToInstagram = new FormData();
-    const fileBuffer = Buffer.from(await file.arrayBuffer());
-    const fileBlob = new Blob([fileBuffer], { type: 'audio/mp4' }); // Use audio/mp4 for voice notes compatibility
-    formToInstagram.append('farr', fileBlob, file.name || 'voice.m4a');
+    let fileBuffer: Buffer = Buffer.from(await file.arrayBuffer());
+    
+    // Transcode the voice note to a valid AAC M4A container for native player compatibility
+    try {
+      console.log('[Send-Voice-API] Commencing FFmpeg audio transcoding to AAC...');
+      fileBuffer = await transcodeToM4A(fileBuffer);
+    } catch (e: any) {
+      console.error('[Send-Voice-API] Audio transcode step error:', e);
+    }
+
+    const fileBlob = new Blob([new Uint8Array(fileBuffer)], { type: 'audio/mp4' }); // Use audio/mp4 for voice notes compatibility
+    formToInstagram.append('farr', fileBlob, 'recorded_voice.m4a');
 
     console.log(`[Send-Voice-API] Uploading voice file to mercury upload.php: ${file.name || 'voice.m4a'}...`);
 
