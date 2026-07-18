@@ -3112,9 +3112,13 @@ export async function runBackgroundAutoSeen(force: boolean = false, targetThread
               ...headers,
               'cookie': cookieHeaderStr
             },
+            redirect: 'manual',
             cache: 'no-store'
           });
-          if (res.ok) {
+          
+          if (res.status === 301 || res.status === 302 || res.status === 307 || res.status === 308) {
+            console.warn(`[AutoSeen-Backend] Instagram redirected target thread ${targetThreadId} fetch (session expired/invalid). Status: ${res.status}`);
+          } else if (res.ok) {
             const json = await res.json();
             if (json && json.thread) {
               threads = [json.thread];
