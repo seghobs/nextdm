@@ -2116,28 +2116,28 @@ export default function InboxPage() {
         const typeLabel = mediaType === 'story_share' ? 'Hikaye' : (mediaType === 'clip' ? 'Reels videosu' : 'Gönderi');
         text = `${typeLabel} paylaştı: ${title || ''}`;
       }
-
-      const cleanSnippetText = (tStr: string, mType: string) => {
-        if (!tStr) return tStr;
-        if (tStr.includes('dosya eki')) {
-          const isSentByMe = tStr.includes('gönderdin');
-          if (mType === 'clip') {
-            return isSentByMe ? tStr.replace('bir dosya eki gönderdin.', 'bir reels videosu paylaştın.') 
-                              : tStr.replace('bir dosya eki gönderdi.', 'bir reels videosu paylaştı.');
-          } else if (mType === 'story_share') {
-            return isSentByMe ? tStr.replace('bir dosya eki gönderdin.', 'bir hikaye paylaştın.') 
-                              : tStr.replace('bir dosya eki gönderdi.', 'bir hikaye paylaştı.');
-          } else {
-            return isSentByMe ? tStr.replace('bir dosya eki gönderdin.', 'bir gönderi paylaştın.') 
-                              : tStr.replace('bir dosya eki gönderdi.', 'bir gönderi paylaştı.');
-          }
-        }
-        return tStr;
-      };
-
-      text = cleanSnippetText(text, mediaType);
-      node.igd_snippet = cleanSnippetText(node.igd_snippet || text, mediaType);
     }
+
+    const cleanSnippetText = (tStr: string, mType: string) => {
+      if (!tStr) return tStr;
+      if (tStr.includes('dosya eki')) {
+        const isSentByMe = tStr.includes('gönderdin');
+        if (mType === 'clip') {
+          return isSentByMe ? tStr.replace('bir dosya eki gönderdin.', 'bir reels videosu paylaştın.') 
+                            : tStr.replace('bir dosya eki gönderdi.', 'bir reels videosu paylaştı.');
+        } else if (mType === 'story_share') {
+          return isSentByMe ? tStr.replace('bir dosya eki gönderdin.', 'bir hikaye paylaştın.') 
+                            : tStr.replace('bir dosya eki gönderdi.', 'bir hikaye paylaştı.');
+        } else {
+          return isSentByMe ? tStr.replace('bir dosya eki gönderdin.', 'bir gönderi paylaştın.') 
+                            : tStr.replace('bir dosya eki gönderdi.', 'bir gönderi paylaştı.');
+        }
+      }
+      return tStr;
+    };
+
+    text = cleanSnippetText(text, mediaType);
+    const finalIgdSnippet = cleanSnippetText(node.igd_snippet || text, mediaType);
 
     const repliedMessage = (node.replied_to_message || node.reply_to_message) ? {
       id: (node.replied_to_message || node.reply_to_message).id || (node.replied_to_message || node.reply_to_message).message_id || '',
@@ -2155,7 +2155,7 @@ export default function InboxPage() {
         text_body: text
       },
       content_type: node.content_type || 'TEXT',
-      igd_snippet: node.igd_snippet || text,
+      igd_snippet: finalIgdSnippet || text,
       text_body: text,
       media_preview_url: previewUrl,
       media_video_url: videoUrl,
