@@ -202,6 +202,22 @@ const VoiceMessagePlayer = ({ audioUrl, sent }: { audioUrl: string; sent: boolea
   const [duration, setDuration] = useState(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
+  const getPlayableUrl = () => {
+    if (!audioUrl) return '';
+    if (audioUrl.startsWith('blob:') || audioUrl.startsWith('data:')) {
+      return audioUrl;
+    }
+    const params = new URLSearchParams();
+    params.append('url', audioUrl);
+    if (typeof window !== 'undefined') {
+      const savedCookies = localStorage.getItem('ig_cookies');
+      const savedHeaders = localStorage.getItem('ig_headers');
+      if (savedCookies) params.append('cookies', savedCookies);
+      if (savedHeaders) params.append('headers', savedHeaders);
+    }
+    return `/api/instagram/proxy_audio?${params.toString()}`;
+  };
+
   useEffect(() => {
     return () => {
       if (audioRef.current) {
@@ -212,7 +228,8 @@ const VoiceMessagePlayer = ({ audioUrl, sent }: { audioUrl: string; sent: boolea
 
   const handlePlayPause = () => {
     if (!audioRef.current) {
-      const audio = new Audio(audioUrl);
+      const playable = getPlayableUrl();
+      const audio = new Audio(playable);
       audio.addEventListener('timeupdate', () => {
         setCurrentTime(audio.currentTime);
         setProgress((audio.currentTime / (audio.duration || 1)) * 100);
