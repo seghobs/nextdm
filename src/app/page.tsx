@@ -3015,7 +3015,8 @@ export default function InboxPage() {
       
       const result = await res.json();
       if (!res.ok || !result.success) {
-        throw new Error(result.error || 'Sesli mesaj gönderilemedi.');
+        console.error('[Voice-Send] Server returned error details:', result.details);
+        throw new Error((result.error || 'Sesli mesaj gönderilemedi.') + (result.details ? ` (Detay: ${result.details})` : ''));
       }
       
       if (result.cookies) {
@@ -3028,7 +3029,7 @@ export default function InboxPage() {
       
     } catch (err: any) {
       console.error('[Voice-Send] Failed to send voice message:', err);
-      alert('Sesli mesaj gönderilemedi: ' + (err.message || 'Bilinmeyen hata'));
+      alert(err.message || 'Bilinmeyen hata');
     } finally {
       setIsUploadingVoice(false);
     }
